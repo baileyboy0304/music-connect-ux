@@ -29,6 +29,10 @@ export function MusicNeighbourhoodPage() {
   const [players, setPlayers] = useState<PlayerItem[]>([]);
   const [selectedPlayer, setSelectedPlayer] = useState('');
   const [phase, setPhase] = useState<GraphPhase>('idle');
+  const [showLines, setShowLines] = useState<boolean>(() => {
+    const v = typeof window !== 'undefined' ? localStorage.getItem('music-connect:show-lines') : null;
+    return v === null ? true : v === '1';
+  });
   const [error, setError] = useState('');
   const [loadingMedia, setLoadingMedia] = useState(false);
   const [albumTrackMap, setAlbumTrackMap] = useState<Record<string, MediaItem[]>>({});
@@ -156,9 +160,20 @@ export function MusicNeighbourhoodPage() {
         <div className="toolbar">
           <h1>Music Neighbourhood</h1>
           <ManualArtistSearch onSearch={(t) => loadArtist(t)} />
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={showLines}
+              onChange={(e) => {
+                setShowLines(e.target.checked);
+                localStorage.setItem('music-connect:show-lines', e.target.checked ? '1' : '0');
+              }}
+            />
+            <span>Show connections</span>
+          </label>
           {error && <p className="error">{error}</p>}
         </div>
-        <BubbleGraph activeArtist={activeArtist} similarArtists={similarArtists} onSelectArtist={(a) => { loadArtist(a.name); return true; }} phase={phase} setPhase={(p) => { setPhase(p); }} />
+        <BubbleGraph activeArtist={activeArtist} similarArtists={similarArtists} onSelectArtist={(a) => { loadArtist(a.name); return true; }} phase={phase} setPhase={(p) => { setPhase(p); }} showLines={showLines} />
       </main>
       <MediaPanel
         albums={albums}
