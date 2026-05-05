@@ -13,21 +13,28 @@ export async function postMusicAssistantCommand(command: string, args: Record<st
 
 export const getPlayers = () => postMusicAssistantCommand('players/all', {});
 export const searchMusic = (query: string, mediaTypes: string[], limit: number) => postMusicAssistantCommand('music/search', { search_query: query, media_types: mediaTypes, limit });
-export async function getAlbumTracks(albumId: string) {
+export async function getAlbumTracks(albumId: string, provider?: string, albumUri?: string) {
   const attempts = [
-    { command: 'music/album/tracks', args: { item_id: albumId } },
-    { command: 'music/albums/tracks', args: { item_id: albumId } },
-    { command: 'music/albums/album_tracks', args: { item_id: albumId } },
-    { command: 'music/albums/get_album_tracks', args: { item_id: albumId } }
+    { command: 'music/albums/album_tracks', args: { item_id: albumId, provider_instance: provider } },
+    { command: 'music/albums/album_tracks', args: { item_id: albumId, provider: provider } },
+    { command: 'music/albums/get_album_tracks', args: { item_id: albumId, provider_instance: provider } },
+    { command: 'music/albums/get_album_tracks', args: { item_id: albumId, provider: provider } },
+    { command: 'music/album/tracks', args: { item_id: albumId, provider_instance: provider } },
+    { command: 'music/albums/tracks', args: { item_id: albumId, provider_instance: provider } }
   ];
   for (const a of attempts) {
-    try { return await postMusicAssistantCommand(a.command, a.args); } catch (e) { console.warn('[MA] album tracks command failed', a.command, (e as Error).message); }
+    const args = Object.fromEntries(Object.entries(a.args).filter(([, v]) => v !== undefined && v !== ''));
+    try { return await postMusicAssistantCommand(a.command, args); } catch (e) { console.warn('[MA] album tracks command failed', a.command, (e as Error).message); }
+  }
+  if (albumUri) {
+    try { return await postMusicAssistantCommand('music/item_by_uri', { uri: albumUri }); } catch (e) { console.warn('[MA] item_by_uri failed', albumUri, (e as Error).message); }
   }
   return { result: [] };
 }
 
 export async function playMedia(playerId: string, mediaUri: string) {
   const attempts: Array<{ command: string; args: Record<string, unknown> }> = [
+    { command: 'player_queues/play_media', args: { queue_id: playerId, media: [mediaUri], option: 'replace' } },
     { command: 'player_queues/play_media', args: { queue_id: playerId, media: [mediaUri] } },
     { command: 'player_queues/play_media', args: { queue_id: playerId, media_id: mediaUri } }
   ];

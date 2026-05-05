@@ -36,6 +36,8 @@ export function MusicNeighbourhoodPage() {
     console.log('Active artist change', artistName, '->', primaryArtist);
     setLoadingMedia(true);
     setError('');
+    setSimilarArtists([]);
+    setAlbumTrackMap({});
     setActiveArtist({ id: normaliseName(primaryArtist).replace(/\s+/g, '-'), name: primaryArtist });
     try {
       const search = await searchMusic(primaryArtist, ['artist', 'album', 'track'], 80);
@@ -62,7 +64,7 @@ export function MusicNeighbourhoodPage() {
       const allAlbums = (Array.isArray(albumsRaw) ? albumsRaw : []).filter((a: any) => artistListIncludes(extractArtists(a), primaryArtist));
       const topList = Array.isArray(topAlbums?.topalbums?.album) ? topAlbums.topalbums.album : [];
       const rank = new Map(topList.map((a: any, i: number) => [normaliseName(a.name), i]));
-      const albumItems = allAlbums.map((a: any) => ({ id: a.item_id || a.uri || a.name, uri: a.uri || '', title: a.name || 'Unknown', artistName: extractArtists(a)[0] || artistName, year: a.year, artwork: a.image, raw: a })) as MediaItem[];
+      const albumItems = allAlbums.map((a: any) => ({ id: a.item_id || a.uri || a.name, uri: a.uri || '', title: a.name || 'Unknown', artistName: extractArtists(a)[0] || artistName, year: a.year, artwork: a.image, provider: a.provider_mappings?.[0]?.provider_instance || a.provider || '', raw: a })) as MediaItem[];
       albumItems.sort((a, b) => Number(rank.get(normaliseName(a.title)) ?? 9999) - Number(rank.get(normaliseName(b.title)) ?? 9999));
       if (requestSeq !== artistLoadSeq.current) return;
       setAlbums(albumItems.slice(0, 30));
@@ -106,7 +108,11 @@ export function MusicNeighbourhoodPage() {
       setSelectedPlayer(selected);
       localStorage.setItem('music-connect:selected-player', selected);
       const seedArtist = mapped.find((p: PlayerItem) => p.id === selected)?.currentArtist;
-      if (seedArtist && seedArtist !== 'N/A') loadArtist(seedArtist); else { setActiveArtist({ id: 'manual', name: 'Enter artist' }); setError('No artist currently playing. Enter an artist manually.'); }
+      const seedTrack = mapped.find((p: PlayerItem) => p.id === selected)?.currentTrack || 'N/A';
+      if (seedArtist && seedArtist !== 'N/A') {
+        lastTrackSig.current = `${seedTrack}::${seedArtist}`;
+        loadArtist(seedArtist);
+      } else { setActiveArtist({ id: 'manual', name: 'Enter artist' }); setError('No artist currently playing. Enter an artist manually.'); }
     } catch (e: any) { setError(e.message); }
   })(); }, []);
 
@@ -152,7 +158,7 @@ export function MusicNeighbourhoodPage() {
         onExpandAlbum={async (album) => {
           if (albumTrackMap[album.id]) return;
           try {
-            const data = await getAlbumTracks(album.id);
+            const data = await getAlbumTracks(album.id, album.provider, album.uri);
             const root = unwrapResult(data);
             let items = pickArray(root).map((t: any) => ({ id: t.item_id || t.uri || t.name, uri: t.uri || '', title: t.name || t.title || 'Unknown', artistName: extractArtists(t)[0] || album.artistName, album: album.title, popularity: t.metadata?.popularity ?? 0 } as MediaItem));
             if (items.length === 0) {
