@@ -15,12 +15,9 @@ export const getPlayers = () => postMusicAssistantCommand('players/all', {});
 export const searchMusic = (query: string, mediaTypes: string[], limit: number) => postMusicAssistantCommand('music/search', { search_query: query, media_types: mediaTypes, limit });
 export async function getAlbumTracks(albumId: string, provider?: string, albumUri?: string) {
   const attempts = [
-    { command: 'music/albums/album_tracks', args: { item_id: albumId, provider_instance: provider } },
-    { command: 'music/albums/album_tracks', args: { item_id: albumId, provider: provider } },
-    { command: 'music/albums/get_album_tracks', args: { item_id: albumId, provider_instance: provider } },
-    { command: 'music/albums/get_album_tracks', args: { item_id: albumId, provider: provider } },
-    { command: 'music/album/tracks', args: { item_id: albumId, provider_instance: provider } },
-    { command: 'music/albums/tracks', args: { item_id: albumId, provider_instance: provider } }
+    { command: 'music/albums/album_tracks', args: { item_id: albumId, provider_instance_id_or_domain: provider } },
+    { command: 'music/albums/album_tracks', args: { item_id: albumId } },
+    { command: 'music/albums/album_versions', args: { item_id: albumId, provider_instance_id_or_domain: provider } }
   ];
   for (const a of attempts) {
     const args = Object.fromEntries(Object.entries(a.args).filter(([, v]) => v !== undefined && v !== ''));

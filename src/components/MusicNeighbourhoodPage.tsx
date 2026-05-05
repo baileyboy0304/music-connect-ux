@@ -12,7 +12,14 @@ import { MediaPanel } from './MediaPanel';
 import { PlayerBar } from './PlayerBar';
 
 
-const toPrimaryArtist = (value: string) => value.split(/\s*(?:\/|,|&| feat\.? | ft\.? )\s*/i).map((v) => v.trim()).find(Boolean) ?? value;
+const toPrimaryArtist = (value: string) => {
+  const clean = value.trim();
+  if (!clean) return value;
+  // Keep duo/band names such as "Mumford & Sons" intact; only strip explicit featuring/collab separators.
+  const lead = clean.split(/\s+(?:feat\.?|ft\.?)\s+/i)[0]?.trim() || clean;
+  if (lead.includes('/')) return lead.split('/').map((v) => v.trim()).find(Boolean) ?? lead;
+  return lead;
+};
 
 export function MusicNeighbourhoodPage() {
   const [activeArtist, setActiveArtist] = useState<ArtistNode>({ id: 'initial', name: 'Loading...' });
@@ -51,7 +58,9 @@ export function MusicNeighbourhoodPage() {
       const [similar, topAlbums] = await Promise.all([getSimilarArtists(primaryArtist, 20, mbid), getTopAlbums(primaryArtist, 30, mbid)]);
       const similarsRaw = Array.isArray(similar?.similarartists?.artist) ? similar.similarartists.artist : similar?.similarartists?.artist ? [similar.similarartists.artist] : [];
       const similarAttrArtist = similar?.similarartists?.['@attr']?.artist ?? '';
-      const similarMatchesRequested = !similarAttrArtist || normaliseName(similarAttrArtist) === normaliseName(primaryArtist);
+      const similarAttrNorm = normaliseName(toPrimaryArtist(similarAttrArtist));
+      const requestedNorm = normaliseName(primaryArtist);
+      const similarMatchesRequested = !similarAttrArtist || similarAttrNorm === requestedNorm;
       if (!similarMatchesRequested) {
         console.warn('[Last.fm] ignoring mismatched similar-artist payload', { requested: primaryArtist, returned: similarAttrArtist });
       }
@@ -160,7 +169,9 @@ export function MusicNeighbourhoodPage() {
           try {
             const data = await getAlbumTracks(album.id, album.provider, album.uri);
             const root = unwrapResult(data);
-            let items = pickArray(root).map((t: any) => ({ id: t.item_id || t.uri || t.name, uri: t.uri || '', title: t.name || t.title || 'Unknown', artistName: extractArtists(t)[0] || album.artistName, album: album.title, popularity: t.metadata?.popularity ?? 0 } as MediaItem));
+            const fromRoot = pickArray(root);
+            const fromNested = Array.isArray((root as any)?.tracks) ? (root as any).tracks : [];
+            let items = [...fromRoot, ...fromNested].map((t: any) => ({ id: t.item_id || t.uri || t.name, uri: t.uri || '', title: t.name || t.title || 'Unknown', artistName: extractArtists(t)[0] || album.artistName, album: album.title, popularity: t.metadata?.popularity ?? 0 } as MediaItem));
             if (items.length === 0) {
               items = tracks.filter((t) => (t.album || '').toLowerCase() === album.title.toLowerCase());
             }
