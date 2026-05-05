@@ -29,9 +29,15 @@ export function MusicNeighbourhoodPage() {
     setError('');
     setActiveArtist({ id: normaliseName(artistName).replace(/\s+/g, '-'), name: artistName });
     try {
-      const [similar, topAlbums, search] = await Promise.all([getSimilarArtists(artistName, 20), getTopAlbums(artistName, 30), searchMusic(artistName, ['artist', 'album', 'track'], 80)]);
+      const search = await searchMusic(artistName, ['artist', 'album', 'track'], 80);
       const searchRoot = unwrapResult(search);
       console.log('[MA] search response keys', Object.keys(search || {}));
+      const artistsRaw = searchRoot?.artists ?? searchRoot?.artist ?? [];
+      const artistCandidates = Array.isArray(artistsRaw) ? artistsRaw : [];
+      const exact = artistCandidates.find((a: any) => normaliseName(a?.name || '') === normaliseName(artistName));
+      const mbid = exact?.mbid || exact?.metadata?.mbid || '';
+      console.log('[MA] artist match', { requested: artistName, matched: exact?.name, mbid: Boolean(mbid) });
+      const [similar, topAlbums] = await Promise.all([getSimilarArtists(artistName, 20, mbid), getTopAlbums(artistName, 30, mbid)]);
       const similarsRaw = Array.isArray(similar?.similarartists?.artist) ? similar.similarartists.artist : similar?.similarartists?.artist ? [similar.similarartists.artist] : [];
       setSimilarArtists(similarsRaw.slice(0, 20).map((a: any) => ({ id: normaliseName(a.name).replace(/\s+/g, '-'), name: a.name, similarity: Number(a.match) || 0.2 })));
       const albumsRaw = searchRoot?.album ?? searchRoot?.albums ?? searchRoot?.results?.album ?? [];

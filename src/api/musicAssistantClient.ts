@@ -8,7 +8,7 @@ const parseResponse = async (r: Response) => {
 };
 
 export async function postMusicAssistantCommand(command: string, args: Record<string, unknown>) {
-  console.log('[MA] command', command);
+  console.log('[MA] command', command, Object.keys(args));
   const r = await fetch('/dev-api/music-assistant', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -25,4 +25,22 @@ export async function postMusicAssistantCommand(command: string, args: Record<st
 
 export const getPlayers = () => postMusicAssistantCommand('players/all', {});
 export const searchMusic = (query: string, mediaTypes: string[], limit: number) => postMusicAssistantCommand('music/search', { search_query: query, media_types: mediaTypes, limit });
-export const playMedia = (playerId: string, mediaUri: string) => postMusicAssistantCommand('player_queues/play_media', { queue_id: playerId, media_id: mediaUri });
+
+export async function playMedia(playerId: string, mediaUri: string) {
+  const attempts: Array<{ command: string; args: Record<string, unknown> }> = [
+    { command: 'player_queues/play_media', args: { queue_id: playerId, media: [mediaUri], option: 'replace' } },
+    { command: 'player_queues/play_media', args: { queue_id: playerId, media: mediaUri, option: 'replace' } },
+    { command: 'player_queues/play_media', args: { queue_id: playerId, media_id: mediaUri } }
+  ];
+
+  let lastError: Error | null = null;
+  for (const attempt of attempts) {
+    try {
+      console.log('[MA] playback attempt', attempt.command, attempt.args);
+      return await postMusicAssistantCommand(attempt.command, attempt.args);
+    } catch (error) {
+      lastError = error as Error;
+    }
+  }
+  throw lastError ?? new Error('Playback failed');
+}

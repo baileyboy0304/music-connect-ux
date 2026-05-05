@@ -150,9 +150,11 @@ export default defineConfig({
             if (!lastfm_api_key?.trim()) { res.statusCode = 400; res.end(JSON.stringify({ error: 'missing Last.fm API key' })); return; }
             const url = new URL(req.url ?? '', 'http://localhost');
             const artist = url.searchParams.get('artist') ?? '';
+            const mbid = url.searchParams.get('mbid') ?? '';
             const limit = url.searchParams.get('limit') ?? (method === 'artist.getSimilar' ? '20' : '30');
-            if (!artist.trim()) { res.statusCode = 400; res.end(JSON.stringify({ error: 'missing artist' })); return; }
-            const target = `https://ws.audioscrobbler.com/2.0/?method=${encodeURIComponent(method)}&artist=${encodeURIComponent(artist)}&api_key=${encodeURIComponent(lastfm_api_key)}&format=json&limit=${encodeURIComponent(limit)}`;
+            const autocorrect = url.searchParams.get('autocorrect') ?? '0';
+            if (!artist.trim() && !mbid.trim()) { res.statusCode = 400; res.end(JSON.stringify({ error: 'missing artist/mbid' })); return; }
+            const target = `https://ws.audioscrobbler.com/2.0/?method=${encodeURIComponent(method)}&${mbid ? `mbid=${encodeURIComponent(mbid)}` : `artist=${encodeURIComponent(artist)}`}&api_key=${encodeURIComponent(lastfm_api_key)}&format=json&limit=${encodeURIComponent(limit)}&autocorrect=${encodeURIComponent(autocorrect)}`;
             const r = await fetch(target);
             res.statusCode = r.status;
             res.end(await r.text());
