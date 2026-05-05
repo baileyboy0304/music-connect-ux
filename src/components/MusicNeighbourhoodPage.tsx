@@ -154,11 +154,11 @@ export function MusicNeighbourhoodPage() {
     <div className="page">
       <main>
         <div className="toolbar">
+          <h1>Music Neighbourhood</h1>
           <ManualArtistSearch onSearch={(t) => loadArtist(t)} />
           {error && <p className="error">{error}</p>}
-          <p className="phase">Phase: {phase}</p>
         </div>
-        <BubbleGraph activeArtist={activeArtist} similarArtists={similarArtists} onSelectArtist={(a) => { loadArtist(a.name); return true; }} phase={phase} setPhase={(p) => { console.log('Phase', p); setPhase(p); }} />
+        <BubbleGraph activeArtist={activeArtist} similarArtists={similarArtists} onSelectArtist={(a) => { loadArtist(a.name); return true; }} phase={phase} setPhase={(p) => { setPhase(p); }} />
       </main>
       <MediaPanel
         albums={albums}
