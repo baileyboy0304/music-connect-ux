@@ -15,15 +15,24 @@ type SecretsConfig = {
   max_tracks?: number;
 };
 
-const normaliseMusicAssistantUrl = (raw: string): string => {
+const buildMusicAssistantCandidates = (raw: string): string[] => {
   const trimmed = raw.trim();
   const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
-  const url = new URL(withProtocol);
-  if (!url.port) url.port = '8095';
-  url.pathname = '/api';
-  url.search = '';
-  url.hash = '';
-  return url.toString().replace(/\/$/, '');
+  const input = new URL(withProtocol);
+  const hadPort = Boolean(input.port);
+  const ports = hadPort ? [input.port] : ['8095', input.protocol === 'https:' ? '443' : '80'];
+  const basePath = '/api';
+
+  const candidates: string[] = [];
+  for (const port of ports) {
+    const u = new URL(input.toString());
+    u.port = port;
+    u.pathname = basePath;
+    u.search = '';
+    u.hash = '';
+    candidates.push(u.toString().replace(/\/$/, ''));
+  }
+  return Array.from(new Set(candidates));
 };
 
 const safeParseSecrets = (secretsPath: string): { ok: true; config: SecretsConfig } | { ok: false; message: string } => {
@@ -61,6 +70,7 @@ const postJson = (targetUrl: string, token: string, payload: Record<string, unkn
     res.on('data', (c) => chunks.push(c));
     res.on('end', () => resolve({ status: res.statusCode ?? 500, body: Buffer.concat(chunks).toString('utf-8') }));
   });
+  req.setTimeout(8000, () => req.destroy(new Error(`timeout connecting to ${url.hostname}:${url.port || (isHttps ? 443 : 80)}`)));
   req.on('error', reject);
   req.write(JSON.stringify(payload));
   req.end();
@@ -95,13 +105,33 @@ export default defineConfig({
             if (!command) { res.statusCode = 400; res.end(JSON.stringify({ error: 'missing command' })); return; }
 
             const payload = { message_id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, command, args };
-            const result = await postJson(normaliseMusicAssistantUrl(music_assistant_url), music_assistant_token, payload);
+            const candidates = buildMusicAssistantCandidates(music_assistant_url);
+            let lastError: Error | null = null;
+            let result: { status: number; body: string } | null = null;
+
+            for (const endpoint of candidates) {
+              try {
+                result = await postJson(endpoint, music_assistant_token, payload);
+                if (result.status >= 200 && result.status < 300) break;
+                console.error('[MA] upstream error', result.status, command, endpoint);
+              } catch (error) {
+                lastError = error as Error;
+                console.error('[MA] proxy candidate failure', endpoint, lastError.message);
+              }
+            }
+
+            if (!result) {
+              res.statusCode = 502;
+              res.end(JSON.stringify({ error: `Music Assistant unavailable. Tried: ${candidates.join(', ')}. ${lastError?.message ?? ''}` }));
+              return;
+            }
+
             if (result.status < 200 || result.status >= 300) {
-              console.error('[MA] upstream error', result.status, command);
               res.statusCode = result.status;
               res.end(result.body || JSON.stringify({ error: 'Music Assistant upstream error' }));
               return;
             }
+
             res.statusCode = result.status;
             res.end(result.body);
           } catch (error) {

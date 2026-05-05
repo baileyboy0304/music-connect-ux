@@ -15,7 +15,11 @@ export async function postMusicAssistantCommand(command: string, args: Record<st
     body: JSON.stringify({ command, args })
   });
   const data = await parseResponse(r);
-  if (!r.ok) throw new Error(data.error ?? data.message ?? `Music Assistant command failed (${command})`);
+  if (!r.ok) {
+    console.error('[MA] command failed', command, data);
+    throw new Error(data.error ?? data.message ?? `Music Assistant command failed (${command})`);
+  }
+  console.log('[MA] command ok', command, Object.keys(data || {}));
   return data;
 }
 
