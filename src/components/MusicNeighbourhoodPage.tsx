@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ArtistNode, MediaItem, PlayerItem } from '../api/apiTypes';
 import { loadConfig } from '../api/configClient';
 import { getSimilarArtists, getTopAlbums } from '../api/lastfmClient';
-import { getPlayers, playMedia, searchMusic } from '../api/musicAssistantClient';
+import { getAlbumTracks, getPlayers, playMedia, searchMusic } from '../api/musicAssistantClient';
 import type { GraphPhase } from '../types';
 import { artistListIncludes, extractArtists, normaliseName } from '../utils/artistMatching';
 import { pickArray, unwrapResult } from '../utils/maResponse';
@@ -21,7 +21,9 @@ export function MusicNeighbourhoodPage() {
   const [phase, setPhase] = useState<GraphPhase>('idle');
   const [error, setError] = useState('');
   const [loadingMedia, setLoadingMedia] = useState(false);
+  const [albumTrackMap, setAlbumTrackMap] = useState<Record<string, MediaItem[]>>({});
   const didBootstrap = useRef(false);
+  const lastTrackSig = useRef('');
 
   const loadArtist = async (artistName: string) => {
     console.log('Active artist change', artistName);
@@ -79,14 +81,43 @@ export function MusicNeighbourhoodPage() {
       const list = pickArray(playersRoot);
       console.log('[MA] players response keys', Object.keys(playersData || {}));
       console.log('[MA] players parsed count', list.length);
-      const mapped = list.map((p: any) => ({ id: p.player_id || p.id, name: p.display_name || p.name || 'Unknown', status: p.state || p.status || 'unknown', currentTrack: p.current_media?.name || p.current_item?.name || p.current_media_item?.name || 'N/A', currentArtist: p.current_media?.artist || p.current_item?.artist || p.current_media_item?.artist || 'N/A', raw: p }));
+      const pickTitle = (p: any) => p.current_media?.name || p.current_item?.name || p.current_media_item?.name || p.current_media?.title || p.current_item?.title || p.current_media_item?.title || p.media_title || 'N/A';
+      const pickArtist = (p: any) => p.current_media?.artist || p.current_item?.artist || p.current_media_item?.artist || p.media_artist || 'N/A';
+      const mapped = list.map((p: any) => ({ id: p.player_id || p.id, name: p.display_name || p.name || 'Unknown', status: p.state || p.status || 'unknown', currentTrack: pickTitle(p), currentArtist: pickArtist(p), raw: p }));
       setPlayers(mapped);
-      const selected = mapped.find((p: PlayerItem) => p.id === config.default_player)?.id || mapped[0]?.id || '';
+      const remembered = localStorage.getItem('music-connect:selected-player') ?? '';
+      const selected = mapped.find((p: PlayerItem) => p.id === remembered)?.id || mapped.find((p: PlayerItem) => p.id === config.default_player)?.id || mapped[0]?.id || '';
       setSelectedPlayer(selected);
+      localStorage.setItem('music-connect:selected-player', selected);
       const seedArtist = mapped.find((p: PlayerItem) => p.id === selected)?.currentArtist;
       if (seedArtist && seedArtist !== 'N/A') loadArtist(seedArtist); else { setActiveArtist({ id: 'manual', name: 'Enter artist' }); setError('No artist currently playing. Enter an artist manually.'); }
     } catch (e: any) { setError(e.message); }
   })(); }, []);
+
+
+  useEffect(() => {
+    if (!selectedPlayer) return;
+    const timer = setInterval(async () => {
+      try {
+        const playersData = await getPlayers();
+        const list = pickArray(unwrapResult(playersData));
+        const p = list.find((x: any) => (x.player_id || x.id) === selectedPlayer);
+        if (!p) return;
+        const title = p.current_media?.name || p.current_item?.name || p.current_media_item?.name || p.current_media?.title || p.media_title || 'N/A';
+        const artist = p.current_media?.artist || p.current_item?.artist || p.current_media_item?.artist || p.media_artist || 'N/A';
+        setPlayers((prev) => prev.map((pl) => pl.id === selectedPlayer ? { ...pl, status: p.state || p.status || pl.status, currentTrack: title, currentArtist: artist } : pl));
+        const sig = `${title}::${artist}`;
+        if (artist && artist !== 'N/A' && sig !== lastTrackSig.current) {
+          lastTrackSig.current = sig;
+          console.log('[MA] detected track change', sig);
+          loadArtist(artist);
+        }
+      } catch (e) {
+        console.error('[MA] polling failed', e);
+      }
+    }, 10000);
+    return () => clearInterval(timer);
+  }, [selectedPlayer]);
 
   return (
     <div className="page">
@@ -101,6 +132,16 @@ export function MusicNeighbourhoodPage() {
       <MediaPanel
         albums={albums}
         tracks={tracks}
+        albumTrackMap={albumTrackMap}
+        onExpandAlbum={async (album) => {
+          if (albumTrackMap[album.id]) return;
+          try {
+            const data = await getAlbumTracks(album.id);
+            const root = unwrapResult(data);
+            const items = pickArray(root).map((t: any) => ({ id: t.item_id || t.uri || t.name, uri: t.uri || '', title: t.name || t.title || 'Unknown', artistName: extractArtists(t)[0] || album.artistName, album: album.title, popularity: t.metadata?.popularity ?? 0 } as MediaItem));
+            setAlbumTrackMap((prev) => ({ ...prev, [album.id]: items }));
+          } catch (e) { console.error('[MA] album tracks failed', album.id, e); }
+        }}
         loading={loadingMedia}
         onExploreArtist={(artist) => artist && artist !== activeArtist.name && loadArtist(artist)}
         onPlayAlbum={async (a) => {
@@ -114,7 +155,7 @@ export function MusicNeighbourhoodPage() {
           try { await playMedia(selectedPlayer, t.uri); } catch { setError('playback request failed'); }
         }}
       />
-      <PlayerBar players={players} selected={selectedPlayer} onSelect={(id) => { console.log('Selected player', id); setSelectedPlayer(id); }} onSeed={() => { const p = players.find((x) => x.id === selectedPlayer); if (!p?.currentArtist || p.currentArtist === 'N/A') { setError('No artist currently playing on this player.'); return; } loadArtist(p.currentArtist); }} />
+      <PlayerBar players={players} selected={selectedPlayer} onSelect={(id) => { console.log('Selected player', id); setSelectedPlayer(id); localStorage.setItem('music-connect:selected-player', id); }} onSeed={() => { const p = players.find((x) => x.id === selectedPlayer); if (!p?.currentArtist || p.currentArtist === 'N/A') { setError('No artist currently playing on this player.'); return; } loadArtist(p.currentArtist); }} />
     </div>
   );
 }
