@@ -1,0 +1,9 @@
+export const IDLE_ATTRACTION = 0.0018;
+export const IDLE_REPULSION = 3200;
+export const IDLE_DAMPING = 0.94;
+export const DRIFT_STRENGTH = 0.03;
+export const EXPLOSION_SPEED = 12;
+export const FLY_IN_SPEED = 0.08;
+export const ACTIVE_BUBBLE_RADIUS = 64;
+export const RELATED_BUBBLE_MIN_RADIUS = 24;
+export const RELATED_BUBBLE_MAX_RADIUS = 42;
