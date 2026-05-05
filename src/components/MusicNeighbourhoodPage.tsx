@@ -12,7 +12,14 @@ import { MediaPanel } from './MediaPanel';
 import { PlayerBar } from './PlayerBar';
 
 
-const toPrimaryArtist = (value: string) => value.split(/\s*(?:\/|,|&| feat\.? | ft\.? )\s*/i).map((v) => v.trim()).find(Boolean) ?? value;
+const toPrimaryArtist = (value: string) => {
+  const clean = value.trim();
+  if (!clean) return value;
+  // Keep duo/band names such as "Mumford & Sons" intact; only strip explicit featuring/collab separators.
+  const lead = clean.split(/\s+(?:feat\.?|ft\.?)\s+/i)[0]?.trim() || clean;
+  if (lead.includes('/')) return lead.split('/').map((v) => v.trim()).find(Boolean) ?? lead;
+  return lead;
+};
 
 export function MusicNeighbourhoodPage() {
   const [activeArtist, setActiveArtist] = useState<ArtistNode>({ id: 'initial', name: 'Loading...' });
@@ -36,6 +43,8 @@ export function MusicNeighbourhoodPage() {
     console.log('Active artist change', artistName, '->', primaryArtist);
     setLoadingMedia(true);
     setError('');
+    setSimilarArtists([]);
+    setAlbumTrackMap({});
     setActiveArtist({ id: normaliseName(primaryArtist).replace(/\s+/g, '-'), name: primaryArtist });
     try {
       const search = await searchMusic(primaryArtist, ['artist', 'album', 'track'], 80);
@@ -49,7 +58,9 @@ export function MusicNeighbourhoodPage() {
       const [similar, topAlbums] = await Promise.all([getSimilarArtists(primaryArtist, 20, mbid), getTopAlbums(primaryArtist, 30, mbid)]);
       const similarsRaw = Array.isArray(similar?.similarartists?.artist) ? similar.similarartists.artist : similar?.similarartists?.artist ? [similar.similarartists.artist] : [];
       const similarAttrArtist = similar?.similarartists?.['@attr']?.artist ?? '';
-      const similarMatchesRequested = !similarAttrArtist || normaliseName(similarAttrArtist) === normaliseName(primaryArtist);
+      const similarAttrNorm = normaliseName(toPrimaryArtist(similarAttrArtist));
+      const requestedNorm = normaliseName(primaryArtist);
+      const similarMatchesRequested = !similarAttrArtist || similarAttrNorm === requestedNorm;
       if (!similarMatchesRequested) {
         console.warn('[Last.fm] ignoring mismatched similar-artist payload', { requested: primaryArtist, returned: similarAttrArtist });
       }
@@ -62,7 +73,7 @@ export function MusicNeighbourhoodPage() {
       const allAlbums = (Array.isArray(albumsRaw) ? albumsRaw : []).filter((a: any) => artistListIncludes(extractArtists(a), primaryArtist));
       const topList = Array.isArray(topAlbums?.topalbums?.album) ? topAlbums.topalbums.album : [];
       const rank = new Map(topList.map((a: any, i: number) => [normaliseName(a.name), i]));
-      const albumItems = allAlbums.map((a: any) => ({ id: a.item_id || a.uri || a.name, uri: a.uri || '', title: a.name || 'Unknown', artistName: extractArtists(a)[0] || artistName, year: a.year, artwork: a.image, raw: a })) as MediaItem[];
+      const albumItems = allAlbums.map((a: any) => ({ id: a.item_id || a.uri || a.name, uri: a.uri || '', title: a.name || 'Unknown', artistName: extractArtists(a)[0] || artistName, year: a.year, artwork: a.image, provider: a.provider_mappings?.[0]?.provider_instance || a.provider || '', raw: a })) as MediaItem[];
       albumItems.sort((a, b) => Number(rank.get(normaliseName(a.title)) ?? 9999) - Number(rank.get(normaliseName(b.title)) ?? 9999));
       if (requestSeq !== artistLoadSeq.current) return;
       setAlbums(albumItems.slice(0, 30));
@@ -106,7 +117,11 @@ export function MusicNeighbourhoodPage() {
       setSelectedPlayer(selected);
       localStorage.setItem('music-connect:selected-player', selected);
       const seedArtist = mapped.find((p: PlayerItem) => p.id === selected)?.currentArtist;
-      if (seedArtist && seedArtist !== 'N/A') loadArtist(seedArtist); else { setActiveArtist({ id: 'manual', name: 'Enter artist' }); setError('No artist currently playing. Enter an artist manually.'); }
+      const seedTrack = mapped.find((p: PlayerItem) => p.id === selected)?.currentTrack || 'N/A';
+      if (seedArtist && seedArtist !== 'N/A') {
+        lastTrackSig.current = `${seedTrack}::${seedArtist}`;
+        loadArtist(seedArtist);
+      } else { setActiveArtist({ id: 'manual', name: 'Enter artist' }); setError('No artist currently playing. Enter an artist manually.'); }
     } catch (e: any) { setError(e.message); }
   })(); }, []);
 
@@ -152,9 +167,11 @@ export function MusicNeighbourhoodPage() {
         onExpandAlbum={async (album) => {
           if (albumTrackMap[album.id]) return;
           try {
-            const data = await getAlbumTracks(album.id);
+            const data = await getAlbumTracks(album.id, album.provider, album.uri);
             const root = unwrapResult(data);
-            let items = pickArray(root).map((t: any) => ({ id: t.item_id || t.uri || t.name, uri: t.uri || '', title: t.name || t.title || 'Unknown', artistName: extractArtists(t)[0] || album.artistName, album: album.title, popularity: t.metadata?.popularity ?? 0 } as MediaItem));
+            const fromRoot = pickArray(root);
+            const fromNested = Array.isArray((root as any)?.tracks) ? (root as any).tracks : [];
+            let items = [...fromRoot, ...fromNested].map((t: any) => ({ id: t.item_id || t.uri || t.name, uri: t.uri || '', title: t.name || t.title || 'Unknown', artistName: extractArtists(t)[0] || album.artistName, album: album.title, popularity: t.metadata?.popularity ?? 0 } as MediaItem));
             if (items.length === 0) {
               items = tracks.filter((t) => (t.album || '').toLowerCase() === album.title.toLowerCase());
             }

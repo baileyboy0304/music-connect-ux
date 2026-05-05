@@ -9,5 +9,5 @@ export type AppConfig = {
 };
 
 export type ArtistNode = { id: string; name: string; image?: string; similarity?: number };
-export type MediaItem = { id: string; uri: string; title: string; artistName: string; album?: string; year?: number; popularity?: number; artwork?: string; duration?: number; raw?: Record<string, unknown> };
+export type MediaItem = { id: string; uri: string; title: string; artistName: string; album?: string; year?: number; popularity?: number; artwork?: string; duration?: number; provider?: string; raw?: Record<string, unknown> };
 export type PlayerItem = { id: string; name: string; status: string; currentTrack: string; currentArtist: string; artwork?: string; raw?: Record<string, unknown> };
