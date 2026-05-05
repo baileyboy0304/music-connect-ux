@@ -167,16 +167,32 @@ export function MusicNeighbourhoodPage() {
         onExpandAlbum={async (album) => {
           if (albumTrackMap[album.id]) return;
           try {
-            const data = await getAlbumTracks(album.id, album.provider, album.uri);
-            const root = unwrapResult(data);
-            const fromRoot = pickArray(root);
-            const fromNested = Array.isArray((root as any)?.tracks) ? (root as any).tracks : [];
-            let items = [...fromRoot, ...fromNested].map((t: any) => ({ id: t.item_id || t.uri || t.name, uri: t.uri || '', title: t.name || t.title || 'Unknown', artistName: extractArtists(t)[0] || album.artistName, album: album.title, popularity: t.metadata?.popularity ?? 0 } as MediaItem));
-            if (items.length === 0) {
-              items = tracks.filter((t) => (t.album || '').toLowerCase() === album.title.toLowerCase());
-            }
+            const rawTracks = await getAlbumTracks({ uri: album.uri, itemId: album.id, provider: album.provider, raw: album.raw });
+            const items = rawTracks
+              .slice()
+              .sort((a: any, b: any) => {
+                const ad = (a.disc_number ?? 1) - (b.disc_number ?? 1);
+                if (ad !== 0) return ad;
+                const at = (a.track_number ?? 999) - (b.track_number ?? 999);
+                if (at !== 0) return at;
+                return String(a.name ?? '').localeCompare(String(b.name ?? ''));
+              })
+              .map((t: any) => ({
+                id: t.uri || t.item_id || `${album.id}::${t.disc_number ?? 1}::${t.track_number ?? 0}::${t.name ?? ''}`,
+                uri: t.uri || '',
+                title: t.name || t.title || 'Unknown',
+                artistName: extractArtists(t)[0] || album.artistName,
+                album: album.title,
+                popularity: t.metadata?.popularity ?? 0,
+                duration: t.duration,
+                raw: t
+              } as MediaItem));
             setAlbumTrackMap((prev) => ({ ...prev, [album.id]: items }));
-          } catch (e) { console.error('[MA] album tracks failed', album.id, e); }
+          } catch (e) {
+            console.error('[MA] album tracks failed', album.id, e);
+            setAlbumTrackMap((prev) => ({ ...prev, [album.id]: [] }));
+            setError('Could not load album tracks');
+          }
         }}
         loading={loadingMedia}
         onExploreArtist={(artist) => artist && artist !== activeArtist.name && loadArtist(artist)}
