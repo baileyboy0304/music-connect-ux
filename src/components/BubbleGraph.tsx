@@ -6,7 +6,7 @@ import { pickOffscreen } from '../utils/graphLayout';
 type SimNode = ArtistNode & { x:number;y:number;vx:number;vy:number;tx:number;ty:number;r:number;opacity:number;scale:number;selected?:boolean };
 const textRadius = (name: string) => Math.max(28, name.length * 3.8 + 14);
 
-export function BubbleGraph({ data, onSelectArtist, phase, setPhase }: { data: ArtistNeighbourhood; onSelectArtist: (a: ArtistNode) => void; phase: GraphPhase; setPhase: (p: GraphPhase) => void }) {
+export function BubbleGraph({ data, onSelectArtist, phase, setPhase }: { data: ArtistNeighbourhood; onSelectArtist: (a: ArtistNode) => boolean; phase: GraphPhase; setPhase: (p: GraphPhase) => void }) {
   const wrap = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 900, h: 620 });
   const [tick, setTick] = useState(0);
@@ -15,6 +15,7 @@ export function BubbleGraph({ data, onSelectArtist, phase, setPhase }: { data: A
   const activeScale = useRef(1);
   const activePos = useRef({ x: center.x, y: center.y });
   const pending = useRef<SimNode | null>(null);
+  const activeLabel = useRef(data.artist.name);
 
   const placeTargets = (list: SimNode[], attachX: number, attachY: number) => {
     const circumference = list.reduce((sum, n) => sum + n.r * 2 + 14, 0);
@@ -37,7 +38,7 @@ export function BubbleGraph({ data, onSelectArtist, phase, setPhase }: { data: A
 
   useEffect(() => { activePos.current = { x: center.x, y: center.y }; }, [center.x, center.y]);
   useEffect(() => { const ro = new ResizeObserver(() => { const r = wrap.current?.getBoundingClientRect(); if (r) setSize({ w: r.width, h: r.height }); }); if (wrap.current) ro.observe(wrap.current); return () => ro.disconnect(); }, []);
-  useEffect(() => { initNodes(); setPhase('fly-in-new-neighbours'); }, [data.artist.id, center.x, center.y]);
+  useEffect(() => { activeLabel.current = data.artist.name; initNodes(); setPhase('fly-in-new-neighbours'); }, [data.artist.id, data.artist.name, center.x, center.y]);
 
   useEffect(() => {
     let raf = 0;
@@ -62,7 +63,18 @@ export function BubbleGraph({ data, onSelectArtist, phase, setPhase }: { data: A
           activePos.current.x += (center.x - activePos.current.x) * 0.06;
           activePos.current.y += (center.y - activePos.current.y) * 0.06;
         }
-        if (out && pending.current) { setPhase('recenter-new-active'); onSelectArtist(pending.current); pending.current = null; }
+        if (out && pending.current) {
+          setPhase('recenter-new-active');
+          const ok = onSelectArtist(pending.current);
+          if (!ok) {
+            activePos.current = { x: center.x, y: center.y };
+            activeLabel.current = data.artist.name;
+            pending.current = null;
+            setPhase('fly-in-new-neighbours');
+          } else {
+            pending.current = null;
+          }
+        }
       } else if (phase === 'idle' || phase === 'settle') {
         for (let i = 0; i < nodes.current.length; i++) {
           const n = nodes.current[i];
@@ -94,11 +106,12 @@ export function BubbleGraph({ data, onSelectArtist, phase, setPhase }: { data: A
     if (phase !== 'idle') return;
     pending.current = n;
     activePos.current = { x: n.x, y: n.y }; // selected stays onscreen first
+    activeLabel.current = n.name;
     for (const node of nodes.current) node.selected = node.id === n.id;
     n.scale = 1.16;
     setPhase('inflate-selected');
     setTimeout(() => setPhase('explode-out'), 200);
   };
 
-  return <div className="graph" ref={wrap}><svg viewBox={`0 0 ${size.w} ${size.h}`} data-tick={tick}><g transform={`translate(${activePos.current.x},${activePos.current.y}) scale(${activeScale.current})`}><circle r={ACTIVE_BUBBLE_RADIUS} className="activeBubble" /><text textAnchor="middle" y="4" className="label">{data.artist.name}</text></g>{nodes.current.map((n)=><g key={n.id} transform={`translate(${n.x},${n.y}) scale(${n.scale})`} onClick={()=>select(n)} style={{ opacity: n.selected ? 0 : n.opacity, cursor: 'pointer' }}><circle r={n.r + 8} fill="transparent" /><circle r={n.r} className="relatedBubble" /><text textAnchor="middle" y="4" className="label">{n.name}</text></g>)}</svg></div>;
+  return <div className="graph" ref={wrap}><svg viewBox={`0 0 ${size.w} ${size.h}`} data-tick={tick}><g transform={`translate(${activePos.current.x},${activePos.current.y}) scale(${activeScale.current})`}><circle r={ACTIVE_BUBBLE_RADIUS} className="activeBubble" /><text textAnchor="middle" y="4" className="label">{activeLabel.current}</text></g>{nodes.current.map((n)=><g key={n.id} transform={`translate(${n.x},${n.y}) scale(${n.scale})`} onClick={()=>select(n)} style={{ opacity: n.selected ? 0 : n.opacity, cursor: 'pointer' }}><circle r={n.r + 8} fill="transparent" /><circle r={n.r} className="relatedBubble" /><text textAnchor="middle" y="4" className="label">{n.name}</text></g>)}</svg></div>;
 }
