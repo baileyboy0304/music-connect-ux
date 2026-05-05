@@ -1,4 +1,6 @@
 import fs from 'node:fs';
+import http from 'node:http';
+import https from 'node:https';
 import path from 'node:path';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
@@ -41,6 +43,28 @@ const readJsonBody = async (req: any) => {
   return JSON.parse(raw) as Record<string, unknown>;
 };
 
+
+const postJson = (targetUrl: string, token: string, payload: Record<string, unknown>) => new Promise<{ status: number; body: string }>((resolve, reject) => {
+  const url = new URL(targetUrl);
+  const isHttps = url.protocol === 'https:';
+  const lib = isHttps ? https : http;
+  const req = lib.request({
+    protocol: url.protocol,
+    hostname: url.hostname,
+    port: url.port || (isHttps ? 443 : 80),
+    path: `${url.pathname}${url.search}`,
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    ...(isHttps ? { rejectUnauthorized: false } : {})
+  }, (res) => {
+    const chunks: Uint8Array[] = [];
+    res.on('data', (c) => chunks.push(c));
+    res.on('end', () => resolve({ status: res.statusCode ?? 500, body: Buffer.concat(chunks).toString('utf-8') }));
+  });
+  req.on('error', reject);
+  req.write(JSON.stringify(payload));
+  req.end();
+});
 export default defineConfig({
   plugins: [
     react(),
@@ -70,20 +94,16 @@ export default defineConfig({
             const args = (body.args && typeof body.args === 'object') ? (body.args as Record<string, unknown>) : {};
             if (!command) { res.statusCode = 400; res.end(JSON.stringify({ error: 'missing command' })); return; }
 
-            const maResponse = await fetch(normaliseMusicAssistantUrl(music_assistant_url), {
-              method: 'POST',
-              headers: { Authorization: `Bearer ${music_assistant_token}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ message_id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, command, args })
-            });
-            const responseText = await maResponse.text();
-            if (!maResponse.ok) {
-              console.error('[MA] upstream error', maResponse.status, command);
-              res.statusCode = maResponse.status;
-              res.end(responseText || JSON.stringify({ error: 'Music Assistant upstream error' }));
+            const payload = { message_id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, command, args };
+            const result = await postJson(normaliseMusicAssistantUrl(music_assistant_url), music_assistant_token, payload);
+            if (result.status < 200 || result.status >= 300) {
+              console.error('[MA] upstream error', result.status, command);
+              res.statusCode = result.status;
+              res.end(result.body || JSON.stringify({ error: 'Music Assistant upstream error' }));
               return;
             }
-            res.statusCode = maResponse.status;
-            res.end(responseText);
+            res.statusCode = result.status;
+            res.end(result.body);
           } catch (error) {
             console.error('[MA] proxy failure', (error as Error).message);
             res.statusCode = 500;
