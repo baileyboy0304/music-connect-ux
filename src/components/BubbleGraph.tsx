@@ -1,45 +1,134 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ArtistNeighbourhood, ArtistNode, GraphPhase } from '../types';
-import { ACTIVE_BUBBLE_RADIUS, DRIFT_STRENGTH, IDLE_ATTRACTION, IDLE_DAMPING, IDLE_REPULSION, RELATED_BUBBLE_MAX_RADIUS, RELATED_BUBBLE_MIN_RADIUS } from '../utils/animationConstants';
-import { pickOffscreen, targetPosition } from '../utils/graphLayout';
+import { ACTIVE_BUBBLE_RADIUS, DRIFT_STRENGTH, EXPLOSION_SPEED, FLY_IN_SPEED, IDLE_DAMPING } from '../utils/animationConstants';
+import { pickOffscreen } from '../utils/graphLayout';
 
-type SimNode = ArtistNode & { x: number; y: number; vx: number; vy: number; tx: number; ty: number; r: number; inflate?: boolean; gone?: boolean; incoming?: boolean };
+type SimNode = ArtistNode & {
+  x: number; y: number; vx: number; vy: number; tx: number; ty: number; r: number;
+  opacity: number; scale: number;
+};
 
-export function BubbleGraph({ data, onSelectArtist, phase, setPhase, selectedId }: { data: ArtistNeighbourhood; onSelectArtist: (a: ArtistNode) => void; phase: GraphPhase; setPhase: (p: GraphPhase) => void; selectedId?: string }) {
-  const wrap = useRef<HTMLDivElement>(null); const svg = useRef<SVGSVGElement>(null); const [size, setSize] = useState({ w: 800, h: 600 });
-  const nodes = useRef<SimNode[]>([]); const activeScale = useRef(1);
+const textRadius = (name: string) => Math.max(28, name.length * 3.8 + 14);
+
+export function BubbleGraph({
+  data, onSelectArtist, phase, setPhase,
+}: {
+  data: ArtistNeighbourhood;
+  onSelectArtist: (a: ArtistNode) => void;
+  phase: GraphPhase;
+  setPhase: (p: GraphPhase) => void;
+}) {
+  const wrap = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState({ w: 900, h: 620 });
+  const [tick, setTick] = useState(0);
   const center = useMemo(() => ({ x: size.w / 2, y: size.h / 2 }), [size]);
-  useEffect(()=>{ const ro = new ResizeObserver(()=>{ const r = wrap.current?.getBoundingClientRect(); if (r) setSize({ w: r.width, h: r.height }); }); if (wrap.current) ro.observe(wrap.current); return ()=>ro.disconnect(); },[]);
+  const nodes = useRef<SimNode[]>([]);
+  const activeScale = useRef(1);
+  const pending = useRef<ArtistNode | null>(null);
+
+  const initNodes = () => {
+    const list = data.similarArtists.slice(0, 18);
+    const total = list.length;
+    nodes.current = list.map((n, i) => {
+      const baseR = textRadius(n.name);
+      const sim = n.similarity ?? 0.6;
+      const r = baseR + sim * 8;
+      const angle = (i / total) * Math.PI * 2;
+      const ring = ACTIVE_BUBBLE_RADIUS + r + 8; // touching look
+      const tx = center.x + Math.cos(angle) * ring;
+      const ty = center.y + Math.sin(angle) * ring;
+      const start = pickOffscreen(size.w, size.h);
+      return { ...n, x: start.x, y: start.y, tx, ty, vx: 0, vy: 0, r, opacity: 0, scale: 1 };
+    });
+  };
 
   useEffect(() => {
-    nodes.current = data.similarArtists.slice(0, 18).map((n, i, arr) => { const t = targetPosition(i, arr.length, n.similarity ?? 0.6, center.x, center.y); const s = pickOffscreen(size.w, size.h); const sim = n.similarity ?? 0.6; return { ...n, x: s.x, y: s.y, vx: 0, vy: 0, tx: t.x, ty: t.y, r: RELATED_BUBBLE_MIN_RADIUS + sim * (RELATED_BUBBLE_MAX_RADIUS - RELATED_BUBBLE_MIN_RADIUS), incoming: true }; });
+    const ro = new ResizeObserver(() => {
+      const r = wrap.current?.getBoundingClientRect();
+      if (!r) return;
+      setSize({ w: r.width, h: r.height });
+    });
+    if (wrap.current) ro.observe(wrap.current);
+    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    initNodes();
     setPhase('fly-in-new-neighbours');
-  }, [data.artist.id]);
+  }, [data.artist.id, center.x, center.y]);
 
   useEffect(() => {
     let raf = 0;
-    const tick = () => {
-      const el = svg.current; if (!el) return;
-      nodes.current.forEach((n, idx) => {
-        const dx = n.tx - n.x; const dy = n.ty - n.y;
-        n.vx += dx * IDLE_ATTRACTION + (Math.random() - 0.5) * DRIFT_STRENGTH;
-        n.vy += dy * IDLE_ATTRACTION + (Math.random() - 0.5) * DRIFT_STRENGTH;
-        nodes.current.forEach((m, j) => { if (idx !== j) { const rx = n.x - m.x; const ry = n.y - m.y; const d2 = Math.max(60, rx * rx + ry * ry); n.vx += (rx / d2) * IDLE_REPULSION * 0.0001; n.vy += (ry / d2) * IDLE_REPULSION * 0.0001; }});
-        n.vx *= IDLE_DAMPING; n.vy *= IDLE_DAMPING; n.x += n.vx; n.y += n.vy;
-      });
-      if (phase === 'fly-in-new-neighbours' && nodes.current.every((n) => Math.hypot(n.tx - n.x, n.ty - n.y) < 15)) { activeScale.current = 0.92; setPhase('collision-pulse'); setTimeout(() => { activeScale.current = 1.04; }, 120); setTimeout(() => { activeScale.current = 1; setPhase('settle'); }, 290); }
-      if (phase === 'settle') setPhase('idle');
-      raf = requestAnimationFrame(tick);
+    const frame = () => {
+      if (phase === 'fly-in-new-neighbours') {
+        let done = true;
+        for (const n of nodes.current) {
+          const dx = n.tx - n.x; const dy = n.ty - n.y;
+          n.vx = dx * FLY_IN_SPEED; n.vy = dy * FLY_IN_SPEED;
+          n.x += n.vx; n.y += n.vy;
+          n.opacity = Math.min(1, n.opacity + 0.04);
+          if (Math.hypot(dx, dy) > 3) done = false;
+        }
+        if (done) {
+          setPhase('collision-pulse');
+          activeScale.current = 0.92;
+          setTimeout(() => { activeScale.current = 1.05; }, 120);
+          setTimeout(() => { activeScale.current = 1; setPhase('settle'); }, 290);
+        }
+      } else if (phase === 'explode-out') {
+        let out = true;
+        for (const n of nodes.current) {
+          const dx = n.x - center.x; const dy = n.y - center.y;
+          const mag = Math.max(0.01, Math.hypot(dx, dy));
+          n.vx = (dx / mag) * EXPLOSION_SPEED;
+          n.vy = (dy / mag) * EXPLOSION_SPEED;
+          n.x += n.vx; n.y += n.vy;
+          n.opacity = Math.max(0, n.opacity - 0.03);
+          if (n.x > -200 && n.x < size.w + 200 && n.y > -200 && n.y < size.h + 200) out = false;
+        }
+        if (out && pending.current) {
+          setPhase('recenter-new-active');
+          onSelectArtist(pending.current);
+          pending.current = null;
+        }
+      } else if (phase === 'idle' || phase === 'settle') {
+        for (const n of nodes.current) {
+          const dx = n.tx - n.x; const dy = n.ty - n.y;
+          n.vx = (n.vx + dx * 0.02 + (Math.random() - 0.5) * DRIFT_STRENGTH) * IDLE_DAMPING;
+          n.vy = (n.vy + dy * 0.02 + (Math.random() - 0.5) * DRIFT_STRENGTH) * IDLE_DAMPING;
+          n.x += n.vx; n.y += n.vy;
+        }
+        if (phase === 'settle') setPhase('idle');
+      }
+      setTick((t) => (t + 1) % 100000);
+      raf = requestAnimationFrame(frame);
     };
-    raf = requestAnimationFrame(tick); return () => cancelAnimationFrame(raf);
-  }, [phase]);
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+  }, [phase, center.x, center.y, onSelectArtist, setPhase, size.h, size.w]);
 
-  const beginSelect = (n: SimNode) => {
+  const select = (n: SimNode) => {
     if (phase !== 'idle') return;
+    pending.current = n;
     setPhase('inflate-selected');
-    setTimeout(() => { setPhase('explode-out'); }, 180);
-    setTimeout(() => { setPhase('recenter-new-active'); onSelectArtist(n); }, 620);
+    n.scale = 1.16;
+    setTimeout(() => { setPhase('explode-out'); }, 200);
   };
 
-  return <div className="graph" ref={wrap}><svg ref={svg} viewBox={`0 0 ${size.w} ${size.h}`}>{nodes.current.map((n)=> <line key={`l-${n.id}`} x1={center.x} y1={center.y} x2={n.x} y2={n.y} stroke={`rgba(140,160,255,${n.similarity ?? 0.5})`} strokeWidth={1 + (n.similarity ?? 0.5) * 2} />)}<g transform={`translate(${center.x},${center.y}) scale(${activeScale.current})`}><circle r={ACTIVE_BUBBLE_RADIUS} className="activeBubble"/><text textAnchor="middle" y="4">{data.artist.name}</text></g>{nodes.current.map((n)=><g key={n.id} transform={`translate(${n.x},${n.y}) scale(${phase==='inflate-selected'&&selectedId===n.id?1.16:1})`} onClick={()=>beginSelect(n)}><circle r={n.r} className="relatedBubble" style={{ opacity: 0.65 + (n.similarity ?? 0.5) * 0.35 }} /><text textAnchor="middle" y="4">{n.name}</text></g>)}</svg></div>;
+  return (
+    <div className="graph" ref={wrap}>
+      <svg viewBox={`0 0 ${size.w} ${size.h}`} key={tick}>
+        <g transform={`translate(${center.x},${center.y}) scale(${activeScale.current})`}>
+          <circle r={ACTIVE_BUBBLE_RADIUS} className="activeBubble" />
+          <text textAnchor="middle" y="4" className="label">{data.artist.name}</text>
+        </g>
+        {nodes.current.map((n) => (
+          <g key={n.id} transform={`translate(${n.x},${n.y}) scale(${n.scale})`} onClick={() => select(n)} style={{ opacity: n.opacity }}>
+            <circle r={n.r} className="relatedBubble" />
+            <text textAnchor="middle" y="4" className="label">{n.name}</text>
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
 }
