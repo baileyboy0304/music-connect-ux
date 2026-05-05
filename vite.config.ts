@@ -1,4 +1,121 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-export default defineConfig({ plugins: [react()] });
+type SecretsConfig = {
+  music_assistant_url?: string;
+  music_assistant_token?: string;
+  lastfm_api_key?: string;
+  default_player?: string;
+  max_similar_artists?: number;
+  max_albums?: number;
+  max_tracks?: number;
+};
+
+const normaliseMusicAssistantUrl = (raw: string): string => {
+  const trimmed = raw.trim();
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+  const url = new URL(withProtocol);
+  if (!url.port) url.port = '8095';
+  url.pathname = '/api';
+  url.search = '';
+  url.hash = '';
+  return url.toString().replace(/\/$/, '');
+};
+
+const safeParseSecrets = (secretsPath: string): { ok: true; config: SecretsConfig } | { ok: false; message: string } => {
+  if (!fs.existsSync(secretsPath)) return { ok: false, message: 'Missing secrets.json. Copy secrets.example.json to secrets.json and enter your Music Assistant and Last.fm values.' };
+  try {
+    return { ok: true, config: JSON.parse(fs.readFileSync(secretsPath, 'utf-8')) as SecretsConfig };
+  } catch {
+    return { ok: false, message: 'Invalid secrets.json. Check JSON syntax.' };
+  }
+};
+
+const readJsonBody = async (req: any) => {
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of req) chunks.push(chunk);
+  const raw = Buffer.concat(chunks).toString('utf-8').trim();
+  if (!raw) return {};
+  return JSON.parse(raw) as Record<string, unknown>;
+};
+
+export default defineConfig({
+  plugins: [
+    react(),
+    {
+      name: 'local-config-and-proxy',
+      configureServer(server) {
+        server.middlewares.use('/local-config', (_req, res) => {
+          const parsed = safeParseSecrets(path.resolve(server.config.root, 'secrets.json'));
+          res.setHeader('Content-Type', 'application/json');
+          if (!parsed.ok) return void res.end(JSON.stringify({ ok: false, error: parsed.message }));
+          const config = parsed.config;
+          res.end(JSON.stringify({ ok: true, config: { default_player: config.default_player ?? '', max_similar_artists: config.max_similar_artists ?? 20, max_albums: config.max_albums ?? 30, max_tracks: config.max_tracks ?? 30, has_music_assistant_url: Boolean(config.music_assistant_url?.trim()), has_music_assistant_token: Boolean(config.music_assistant_token?.trim()), has_lastfm_api_key: Boolean(config.lastfm_api_key?.trim()) } }));
+        });
+
+        server.middlewares.use('/dev-api/music-assistant', async (req, res) => {
+          res.setHeader('Content-Type', 'application/json');
+          try {
+            if (req.method !== 'POST') { res.statusCode = 405; res.end(JSON.stringify({ error: 'Method not allowed' })); return; }
+            const parsed = safeParseSecrets(path.resolve(server.config.root, 'secrets.json'));
+            if (!parsed.ok) { res.statusCode = 500; res.end(JSON.stringify({ error: parsed.message })); return; }
+            const { music_assistant_url, music_assistant_token } = parsed.config;
+            if (!music_assistant_url?.trim()) { res.statusCode = 400; res.end(JSON.stringify({ error: 'missing Music Assistant URL' })); return; }
+            if (!music_assistant_token?.trim()) { res.statusCode = 400; res.end(JSON.stringify({ error: 'missing Music Assistant token' })); return; }
+
+            const body = await readJsonBody(req);
+            const command = typeof body.command === 'string' ? body.command : '';
+            const args = (body.args && typeof body.args === 'object') ? (body.args as Record<string, unknown>) : {};
+            if (!command) { res.statusCode = 400; res.end(JSON.stringify({ error: 'missing command' })); return; }
+
+            const maResponse = await fetch(normaliseMusicAssistantUrl(music_assistant_url), {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${music_assistant_token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ message_id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, command, args })
+            });
+            const responseText = await maResponse.text();
+            if (!maResponse.ok) {
+              console.error('[MA] upstream error', maResponse.status, command);
+              res.statusCode = maResponse.status;
+              res.end(responseText || JSON.stringify({ error: 'Music Assistant upstream error' }));
+              return;
+            }
+            res.statusCode = maResponse.status;
+            res.end(responseText);
+          } catch (error) {
+            console.error('[MA] proxy failure', (error as Error).message);
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: 'Music Assistant unavailable' }));
+          }
+        });
+
+        const lastFmProxy = (method: string) => async (req: any, res: any) => {
+          res.setHeader('Content-Type', 'application/json');
+          try {
+            const parsed = safeParseSecrets(path.resolve(server.config.root, 'secrets.json'));
+            if (!parsed.ok) { res.statusCode = 500; res.end(JSON.stringify({ error: parsed.message })); return; }
+            const { lastfm_api_key } = parsed.config;
+            if (!lastfm_api_key?.trim()) { res.statusCode = 400; res.end(JSON.stringify({ error: 'missing Last.fm API key' })); return; }
+            const url = new URL(req.url ?? '', 'http://localhost');
+            const artist = url.searchParams.get('artist') ?? '';
+            const limit = url.searchParams.get('limit') ?? (method === 'artist.getSimilar' ? '20' : '30');
+            if (!artist.trim()) { res.statusCode = 400; res.end(JSON.stringify({ error: 'missing artist' })); return; }
+            const target = `https://ws.audioscrobbler.com/2.0/?method=${encodeURIComponent(method)}&artist=${encodeURIComponent(artist)}&api_key=${encodeURIComponent(lastfm_api_key)}&format=json&limit=${encodeURIComponent(limit)}`;
+            const r = await fetch(target);
+            res.statusCode = r.status;
+            res.end(await r.text());
+          } catch (error) {
+            console.error('[Last.fm] proxy failure', (error as Error).message);
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: 'Last.fm unavailable' }));
+          }
+        };
+
+        server.middlewares.use('/dev-api/lastfm/similar', lastFmProxy('artist.getSimilar'));
+        server.middlewares.use('/dev-api/lastfm/top-albums', lastFmProxy('artist.getTopAlbums'));
+      }
+    }
+  ]
+});
