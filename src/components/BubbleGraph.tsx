@@ -67,11 +67,12 @@ export function BubbleGraph({ data, onSelectArtist, phase, setPhase }: { data: A
           if (n.x > -220 && n.x < size.w + 220 && n.y > -220 && n.y < size.h + 220) out = false;
         }
         if (pending.current && Math.hypot(center.x - pending.current.x, center.y - pending.current.y) < 6) {
-          const ok = onSelectArtist(pending.current);
+          const selected = pending.current;
+          pending.current = null;
+          const ok = onSelectArtist(selected);
           if (!ok) {
             activePos.current = { x: center.x, y: center.y, vx: 0, vy: 0, exploding: false };
             activeLabel.current = data.artist.name;
-            pending.current = null;
             setPhase('fly-in-new-neighbours');
           }
         }
@@ -107,7 +108,6 @@ export function BubbleGraph({ data, onSelectArtist, phase, setPhase }: { data: A
     activePos.current = { x: center.x, y: center.y, vx: Math.cos(angle) * EXPLOSION_SPEED, vy: Math.sin(angle) * EXPLOSION_SPEED, exploding: true };
     setPhase('inflate-selected');
     setTimeout(() => setPhase('explode-out'), 200);
-    setTimeout(() => { pending.current = null; }, 700);
   };
 
   return <div className="graph" ref={wrap}><svg viewBox={`0 0 ${size.w} ${size.h}`} data-tick={tick}><g transform={`translate(${activePos.current.x},${activePos.current.y}) scale(${activeScale.current})`} style={{ opacity: activePos.current.exploding ? 0.9 : 1 }}><circle r={ACTIVE_BUBBLE_RADIUS} className="activeBubble" /><text textAnchor="middle" y="4" className="label">{activeLabel.current}</text></g>{nodes.current.map((n)=><g key={n.id} transform={`translate(${n.x},${n.y}) scale(${n.scale})`} onClick={()=>select(n)} style={{ opacity: n.selected ? 1 : n.opacity, cursor: 'pointer' }}><circle r={n.r + 8} fill="transparent" /><circle r={n.r} className={n.selected && phase !== 'idle' ? 'activeBubble' : 'relatedBubble'} /><text textAnchor="middle" y="4" className="label">{n.name}</text></g>)}</svg></div>;
