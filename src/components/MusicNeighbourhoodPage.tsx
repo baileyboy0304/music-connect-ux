@@ -11,6 +11,9 @@ import { ManualArtistSearch } from './ManualArtistSearch';
 import { MediaPanel } from './MediaPanel';
 import { PlayerBar } from './PlayerBar';
 
+
+const toPrimaryArtist = (value: string) => value.split(/\s*(?:\/|,|&| feat\.? | ft\.? )\s*/i).map((v) => v.trim()).find(Boolean) ?? value;
+
 export function MusicNeighbourhoodPage() {
   const [activeArtist, setActiveArtist] = useState<ArtistNode>({ id: 'initial', name: 'Loading...' });
   const [similarArtists, setSimilarArtists] = useState<ArtistNode[]>([]);
@@ -24,47 +27,59 @@ export function MusicNeighbourhoodPage() {
   const [albumTrackMap, setAlbumTrackMap] = useState<Record<string, MediaItem[]>>({});
   const didBootstrap = useRef(false);
   const lastTrackSig = useRef('');
+  const artistLoadSeq = useRef(0);
 
   const loadArtist = async (artistName: string) => {
-    console.log('Active artist change', artistName);
+    const requestSeq = ++artistLoadSeq.current;
+    const primaryArtist = toPrimaryArtist(artistName);
+    console.log('Active artist change', artistName, '->', primaryArtist);
     setLoadingMedia(true);
     setError('');
-    setActiveArtist({ id: normaliseName(artistName).replace(/\s+/g, '-'), name: artistName });
+    setActiveArtist({ id: normaliseName(primaryArtist).replace(/\s+/g, '-'), name: primaryArtist });
     try {
-      const search = await searchMusic(artistName, ['artist', 'album', 'track'], 80);
+      const search = await searchMusic(primaryArtist, ['artist', 'album', 'track'], 80);
       const searchRoot = unwrapResult(search);
       console.log('[MA] search response keys', Object.keys(search || {}));
       const artistsRaw = searchRoot?.artists ?? searchRoot?.artist ?? [];
       const artistCandidates = Array.isArray(artistsRaw) ? artistsRaw : [];
-      const exact = artistCandidates.find((a: any) => normaliseName(a?.name || '') === normaliseName(artistName));
+      const exact = artistCandidates.find((a: any) => normaliseName(a?.name || '') === normaliseName(primaryArtist));
       const mbid = exact?.mbid || exact?.metadata?.mbid || '';
-      console.log('[MA] artist match', { requested: artistName, matched: exact?.name, mbid: Boolean(mbid) });
-      const [similar, topAlbums] = await Promise.all([getSimilarArtists(artistName, 20, mbid), getTopAlbums(artistName, 30, mbid)]);
+      console.log('[MA] artist match', { requested: primaryArtist, matched: exact?.name, mbid: Boolean(mbid) });
+      const [similar, topAlbums] = await Promise.all([getSimilarArtists(primaryArtist, 20, mbid), getTopAlbums(primaryArtist, 30, mbid)]);
       const similarsRaw = Array.isArray(similar?.similarartists?.artist) ? similar.similarartists.artist : similar?.similarartists?.artist ? [similar.similarartists.artist] : [];
-      setSimilarArtists(similarsRaw.slice(0, 20).map((a: any) => ({ id: normaliseName(a.name).replace(/\s+/g, '-'), name: a.name, similarity: Number(a.match) || 0.2 })));
+      const similarAttrArtist = similar?.similarartists?.['@attr']?.artist ?? '';
+      const similarMatchesRequested = !similarAttrArtist || normaliseName(similarAttrArtist) === normaliseName(primaryArtist);
+      if (!similarMatchesRequested) {
+        console.warn('[Last.fm] ignoring mismatched similar-artist payload', { requested: primaryArtist, returned: similarAttrArtist });
+      }
+      if (requestSeq !== artistLoadSeq.current) { console.log('[MA] stale similar response ignored', primaryArtist, requestSeq); return; }
+      const similarList = similarMatchesRequested ? similarsRaw : [];
+      setSimilarArtists(similarList.slice(0, 20).map((a: any) => ({ id: normaliseName(a.name).replace(/\s+/g, '-'), name: a.name, similarity: Number(a.match) || 0.2 })));
       const albumsRaw = searchRoot?.album ?? searchRoot?.albums ?? searchRoot?.results?.album ?? [];
       const tracksRaw = searchRoot?.track ?? searchRoot?.tracks ?? searchRoot?.results?.track ?? [];
       console.log('[MA] search parsed counts', { albums: Array.isArray(albumsRaw) ? albumsRaw.length : 0, tracks: Array.isArray(tracksRaw) ? tracksRaw.length : 0 });
-      const allAlbums = (Array.isArray(albumsRaw) ? albumsRaw : []).filter((a: any) => artistListIncludes(extractArtists(a), artistName));
+      const allAlbums = (Array.isArray(albumsRaw) ? albumsRaw : []).filter((a: any) => artistListIncludes(extractArtists(a), primaryArtist));
       const topList = Array.isArray(topAlbums?.topalbums?.album) ? topAlbums.topalbums.album : [];
       const rank = new Map(topList.map((a: any, i: number) => [normaliseName(a.name), i]));
       const albumItems = allAlbums.map((a: any) => ({ id: a.item_id || a.uri || a.name, uri: a.uri || '', title: a.name || 'Unknown', artistName: extractArtists(a)[0] || artistName, year: a.year, artwork: a.image, raw: a })) as MediaItem[];
       albumItems.sort((a, b) => Number(rank.get(normaliseName(a.title)) ?? 9999) - Number(rank.get(normaliseName(b.title)) ?? 9999));
+      if (requestSeq !== artistLoadSeq.current) return;
       setAlbums(albumItems.slice(0, 30));
 
-      const allTracks = (Array.isArray(tracksRaw) ? tracksRaw : []).filter((t: any) => artistListIncludes(extractArtists(t), artistName));
+      const allTracks = (Array.isArray(tracksRaw) ? tracksRaw : []).filter((t: any) => artistListIncludes(extractArtists(t), primaryArtist));
       const dedup = new Map<string, MediaItem>();
       for (const t of allTracks) {
-        const item: MediaItem = { id: t.item_id || t.uri || t.name, uri: t.uri || '', title: t.name || 'Unknown', artistName: extractArtists(t)[0] || artistName, album: t.album?.name, popularity: t.metadata?.popularity ?? 0, artwork: t.image, raw: t };
+        const item: MediaItem = { id: t.item_id || t.uri || t.name, uri: t.uri || '', title: t.name || 'Unknown', artistName: extractArtists(t)[0] || primaryArtist, album: t.album?.name, popularity: t.metadata?.popularity ?? 0, artwork: t.image, raw: t };
         const key = normaliseName(item.title);
         const existing = dedup.get(key);
         if (!existing || (item.popularity ?? 0) > (existing.popularity ?? 0)) dedup.set(key, item);
       }
+      if (requestSeq !== artistLoadSeq.current) return;
       setTracks(Array.from(dedup.values()).sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0)).slice(0, 30));
-      if (similarsRaw.length === 0) setError('Last.fm no similar artists');
+      if ((similarMatchesRequested ? similarsRaw : []).length === 0) setError('Last.fm no similar artists');
     } catch (e: any) {
-      setError(e.message || 'Failed loading artist');
-    } finally { setLoadingMedia(false); }
+      if (requestSeq === artistLoadSeq.current) setError(e.message || 'Failed loading artist');
+    } finally { if (requestSeq === artistLoadSeq.current) setLoadingMedia(false); }
   };
 
   useEffect(() => {
@@ -110,7 +125,7 @@ export function MusicNeighbourhoodPage() {
         if (artist && artist !== 'N/A' && sig !== lastTrackSig.current) {
           lastTrackSig.current = sig;
           console.log('[MA] detected track change', sig);
-          loadArtist(artist);
+          loadArtist(toPrimaryArtist(artist));
         }
       } catch (e) {
         console.error('[MA] polling failed', e);
@@ -155,7 +170,7 @@ export function MusicNeighbourhoodPage() {
           try { await playMedia(selectedPlayer, t.uri); } catch { setError('playback request failed'); }
         }}
       />
-      <PlayerBar players={players} selected={selectedPlayer} onSelect={(id) => { console.log('Selected player', id); setSelectedPlayer(id); localStorage.setItem('music-connect:selected-player', id); }} onSeed={() => { const p = players.find((x) => x.id === selectedPlayer); if (!p?.currentArtist || p.currentArtist === 'N/A') { setError('No artist currently playing on this player.'); return; } loadArtist(p.currentArtist); }} />
+      <PlayerBar players={players} selected={selectedPlayer} onSelect={(id) => { console.log('Selected player', id); setSelectedPlayer(id); localStorage.setItem('music-connect:selected-player', id); }} onSeed={() => { const p = players.find((x) => x.id === selectedPlayer); if (!p?.currentArtist || p.currentArtist === 'N/A') { setError('No artist currently playing on this player.'); return; } loadArtist(toPrimaryArtist(p.currentArtist)); }} />
     </div>
   );
 }
