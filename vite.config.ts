@@ -75,8 +75,15 @@ export default defineConfig({
               headers: { Authorization: `Bearer ${music_assistant_token}`, 'Content-Type': 'application/json' },
               body: JSON.stringify({ message_id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, command, args })
             });
+            const responseText = await maResponse.text();
+            if (!maResponse.ok) {
+              console.error('[MA] upstream error', maResponse.status, command);
+              res.statusCode = maResponse.status;
+              res.end(responseText || JSON.stringify({ error: 'Music Assistant upstream error' }));
+              return;
+            }
             res.statusCode = maResponse.status;
-            res.end(await maResponse.text());
+            res.end(responseText);
           } catch (error) {
             console.error('[MA] proxy failure', (error as Error).message);
             res.statusCode = 500;

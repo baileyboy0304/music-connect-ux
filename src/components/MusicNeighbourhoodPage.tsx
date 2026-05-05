@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ArtistNode, MediaItem, PlayerItem } from '../api/apiTypes';
 import { loadConfig } from '../api/configClient';
 import { getSimilarArtists, getTopAlbums } from '../api/lastfmClient';
@@ -20,6 +20,7 @@ export function MusicNeighbourhoodPage() {
   const [phase, setPhase] = useState<GraphPhase>('idle');
   const [error, setError] = useState('');
   const [loadingMedia, setLoadingMedia] = useState(false);
+  const didBootstrap = useRef(false);
 
   const loadArtist = async (artistName: string) => {
     console.log('Active artist change', artistName);
@@ -52,7 +53,10 @@ export function MusicNeighbourhoodPage() {
     } finally { setLoadingMedia(false); }
   };
 
-  useEffect(() => { (async () => {
+  useEffect(() => {
+    if (didBootstrap.current) return;
+    didBootstrap.current = true;
+    (async () => {
     try {
       const config = await loadConfig();
       if (!config.has_music_assistant_url) throw new Error('missing Music Assistant URL');

@@ -1,8 +1,21 @@
+const parseResponse = async (r: Response) => {
+  const text = await r.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { error: text || 'Unknown error' };
+  }
+};
+
 export async function postMusicAssistantCommand(command: string, args: Record<string, unknown>) {
   console.log('[MA] command', command);
-  const r = await fetch('/dev-api/music-assistant', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ command, args }) });
-  const data = await r.json();
-  if (!r.ok) throw new Error(data.error ?? `Music Assistant command failed (${command})`);
+  const r = await fetch('/dev-api/music-assistant', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command, args })
+  });
+  const data = await parseResponse(r);
+  if (!r.ok) throw new Error(data.error ?? data.message ?? `Music Assistant command failed (${command})`);
   return data;
 }
 
