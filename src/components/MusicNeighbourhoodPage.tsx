@@ -4,7 +4,7 @@ import { loadConfig } from '../api/configClient';
 import { getSimilarArtists, getTopAlbums } from '../api/lastfmClient';
 import { getAlbumTracks, getPlayers, playMedia, searchMusic } from '../api/musicAssistantClient';
 import type { GraphPhase } from '../types';
-import { artistListIncludes, extractArtists, normaliseName } from '../utils/artistMatching';
+import { artistListIncludes, artistMatches, extractArtists, normaliseName } from '../utils/artistMatching';
 import { pickArray, unwrapResult } from '../utils/maResponse';
 import { BubbleGraph } from './BubbleGraph';
 import { ManualArtistSearch } from './ManualArtistSearch';
@@ -52,7 +52,7 @@ export function MusicNeighbourhoodPage() {
       console.log('[MA] search response keys', Object.keys(search || {}));
       const artistsRaw = searchRoot?.artists ?? searchRoot?.artist ?? [];
       const artistCandidates = Array.isArray(artistsRaw) ? artistsRaw : [];
-      const exact = artistCandidates.find((a: any) => normaliseName(a?.name || '') === normaliseName(primaryArtist));
+      const exact = artistCandidates.find((a: any) => artistMatches(a?.name || '', primaryArtist));
       const mbid = exact?.mbid || exact?.metadata?.mbid || '';
       console.log('[MA] artist match', { requested: primaryArtist, matched: exact?.name, mbid: Boolean(mbid) });
       const [similar, topAlbums] = await Promise.all([getSimilarArtists(primaryArtist, 20, mbid), getTopAlbums(primaryArtist, 30, mbid)]);
@@ -154,11 +154,11 @@ export function MusicNeighbourhoodPage() {
     <div className="page">
       <main>
         <div className="toolbar">
+          <h1>Music Neighbourhood</h1>
           <ManualArtistSearch onSearch={(t) => loadArtist(t)} />
           {error && <p className="error">{error}</p>}
-          <p className="phase">Phase: {phase}</p>
         </div>
-        <BubbleGraph activeArtist={activeArtist} similarArtists={similarArtists} onSelectArtist={(a) => { loadArtist(a.name); return true; }} phase={phase} setPhase={(p) => { console.log('Phase', p); setPhase(p); }} />
+        <BubbleGraph activeArtist={activeArtist} similarArtists={similarArtists} onSelectArtist={(a) => { loadArtist(a.name); return true; }} phase={phase} setPhase={(p) => { setPhase(p); }} />
       </main>
       <MediaPanel
         albums={albums}
