@@ -1,46 +1,29 @@
-# Music Neighbourhood UX Prototype
+# music-connect-ux
 
-A standalone **React + TypeScript + Vite** frontend prototype for exploring artist neighbourhoods with animated bubble transitions.
+Standalone React/Vite UX prototype for Music Assistant + Last.fm artist neighbourhood exploration.
 
-## Install
+## Setup
 
-```bash
-npm install
-```
+1. Install dependencies:
+   - `npm install`
+2. Copy local config:
+   - `cp secrets.example.json secrets.json`
+3. Edit `secrets.json` with your local values.
+4. Run dev server:
+   - `npm run dev`
 
-## Run
+If `secrets.json` is missing, the UI shows:
 
-```bash
-npm run dev
-```
+`Missing secrets.json. Copy secrets.example.json to secrets.json and enter your Music Assistant and Last.fm values.`
 
-## What this prototype includes
+## Notes
 
-- Animated artist bubble graph with transition phases (`idle`, `inflate-selected`, `explode-out`, `recenter-new-active`, `fly-in-new-neighbours`, `collision-pulse`, `settle`).
-- Manual artist lookup (by ID or name, case-insensitive).
-- Mock right-side media panel (albums/tracks) with explicit play icon actions.
-- Mock bottom player selector / mini-player with **Seed from current player**.
-- Visible inline errors and event log for mock playback actions.
+- This app remains a standalone browser UX app (not a Home Assistant custom integration).
+- Dev middleware serves:
+  - `GET /local-config`
+  - `POST /dev-api/music-assistant`
+  - `GET /dev-api/lastfm/similar`
+  - `GET /dev-api/lastfm/top-albums`
+- Tokens are kept in `secrets.json` server-side and not sent in `/local-config`.
 
-## Mock player controls
-
-- Selecting a player updates only player selection state.
-- It does **not** auto-change graph artist.
-- Press **Seed from current player** to transition graph to the selected player’s current artist, if mock neighbourhood data exists.
-
-## Mock media cards
-
-- Pressing the play icon triggers a mock playback event and logs it in the on-screen event log.
-- Clicking the card body explores the card artist (switches graph) when neighbourhood data is available.
-- Card clicks do not start playback accidentally.
-
-## Intentionally not implemented yet
-
-- Home Assistant integration/panel registration
-- Music Assistant API
-- Last.fm API
-- Authentication/tokens
-- Backend/proxy/websocket logic
-- Persistent settings
-
-This project is strictly an animation + UX prototype before Home Assistant, Music Assistant, and Last.fm integration.
+This standalone UX prototype loads API credentials locally for development. For a deployed Home Assistant version, API calls should be proxied server-side so Music Assistant and Last.fm credentials are not exposed to the browser.
