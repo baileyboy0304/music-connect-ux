@@ -15,15 +15,15 @@ export const getPlayers = () => postMusicAssistantCommand('players/all', {});
 export const searchMusic = (query: string, mediaTypes: string[], limit: number) => postMusicAssistantCommand('music/search', { search_query: query, media_types: mediaTypes, limit });
 export async function getAlbumTracks(albumId: string) {
   const attempts = [
+    { command: 'music/album/tracks', args: { item_id: albumId } },
     { command: 'music/albums/tracks', args: { item_id: albumId } },
     { command: 'music/albums/album_tracks', args: { item_id: albumId } },
     { command: 'music/albums/get_album_tracks', args: { item_id: albumId } }
   ];
-  let last: Error | null = null;
   for (const a of attempts) {
-    try { return await postMusicAssistantCommand(a.command, a.args); } catch (e) { last = e as Error; }
+    try { return await postMusicAssistantCommand(a.command, a.args); } catch (e) { console.warn('[MA] album tracks command failed', a.command, (e as Error).message); }
   }
-  throw last ?? new Error('Album tracks failed');
+  return { result: [] };
 }
 
 export async function playMedia(playerId: string, mediaUri: string) {

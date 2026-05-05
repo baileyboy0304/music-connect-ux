@@ -32,6 +32,7 @@ export function MusicNeighbourhoodPage() {
   const loadArtist = async (artistName: string) => {
     const requestSeq = ++artistLoadSeq.current;
     const primaryArtist = toPrimaryArtist(artistName);
+    if (!primaryArtist.trim()) { setError('Enter an artist name.'); return; }
     console.log('Active artist change', artistName, '->', primaryArtist);
     setLoadingMedia(true);
     setError('');
@@ -153,7 +154,10 @@ export function MusicNeighbourhoodPage() {
           try {
             const data = await getAlbumTracks(album.id);
             const root = unwrapResult(data);
-            const items = pickArray(root).map((t: any) => ({ id: t.item_id || t.uri || t.name, uri: t.uri || '', title: t.name || t.title || 'Unknown', artistName: extractArtists(t)[0] || album.artistName, album: album.title, popularity: t.metadata?.popularity ?? 0 } as MediaItem));
+            let items = pickArray(root).map((t: any) => ({ id: t.item_id || t.uri || t.name, uri: t.uri || '', title: t.name || t.title || 'Unknown', artistName: extractArtists(t)[0] || album.artistName, album: album.title, popularity: t.metadata?.popularity ?? 0 } as MediaItem));
+            if (items.length === 0) {
+              items = tracks.filter((t) => (t.album || '').toLowerCase() === album.title.toLowerCase());
+            }
             setAlbumTrackMap((prev) => ({ ...prev, [album.id]: items }));
           } catch (e) { console.error('[MA] album tracks failed', album.id, e); }
         }}
