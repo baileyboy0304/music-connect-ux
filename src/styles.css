@@ -164,7 +164,12 @@ main {
   cursor: pointer;
   transition: background 150ms ease, border-color 150ms ease, transform 150ms ease;
   position: relative;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
+
+.mediaList.dragging .card { cursor: grabbing; }
 
 .card:hover {
   background: rgba(255, 255, 255, 0.06);
