@@ -38,7 +38,8 @@ export function MusicNeighbourhoodPage() {
   const [albumTrackMap, setAlbumTrackMap] = useState<Record<string, MediaItem[]>>({});
   const didBootstrap = useRef(false);
   const lastTrackSig = useRef('');
-  const lastArtistKey = useRef('');
+  const lastArtistKey = useRef(''); // currently-loaded active artist
+  const lastPlayerArtistKey = useRef(''); // artist last reported by the player; only updates from polling/bootstrap
   const similarCountRef = useRef(0);
   const artistLoadSeq = useRef(0);
 
@@ -134,6 +135,7 @@ export function MusicNeighbourhoodPage() {
       const seedTrack = mapped.find((p: PlayerItem) => p.id === selected)?.currentTrack || 'N/A';
       if (seedArtist && seedArtist !== 'N/A') {
         lastTrackSig.current = `${seedTrack}::${seedArtist}`;
+        lastPlayerArtistKey.current = normaliseName(toPrimaryArtist(seedArtist));
         loadArtist(seedArtist);
       } else { setActiveArtist({ id: 'manual', name: 'Enter artist' }); setError('No artist currently playing. Enter an artist manually.'); }
     } catch (e: any) { setError(e.message); }
@@ -154,8 +156,11 @@ export function MusicNeighbourhoodPage() {
         lastTrackSig.current = `${title}::${artist}`;
         if (artist && artist !== 'N/A') {
           const newKey = normaliseName(toPrimaryArtist(artist));
-          if (newKey && newKey !== lastArtistKey.current) {
-            console.log('[MA] detected artist change', artist);
+          // Only follow the player when it actually moves to a new artist on its own,
+          // never to override a user's manual navigation.
+          if (newKey && newKey !== lastPlayerArtistKey.current) {
+            console.log('[MA] player advanced to new artist', artist);
+            lastPlayerArtistKey.current = newKey;
             loadArtist(toPrimaryArtist(artist));
           }
         }
@@ -234,7 +239,7 @@ export function MusicNeighbourhoodPage() {
           try { await playMedia(selectedPlayer, t.uri); } catch { setError('playback request failed'); }
         }}
       />
-      <PlayerBar players={players} selected={selectedPlayer} onSelect={(id) => { console.log('Selected player', id); setSelectedPlayer(id); localStorage.setItem('music-connect:selected-player', id); }} onSeed={() => { const p = players.find((x) => x.id === selectedPlayer); if (!p?.currentArtist || p.currentArtist === 'N/A') { setError('No artist currently playing on this player.'); return; } loadArtist(toPrimaryArtist(p.currentArtist)); }} />
+      <PlayerBar players={players} selected={selectedPlayer} onSelect={(id) => { console.log('Selected player', id); setSelectedPlayer(id); localStorage.setItem('music-connect:selected-player', id); }} onSeed={() => { const p = players.find((x) => x.id === selectedPlayer); if (!p?.currentArtist || p.currentArtist === 'N/A') { setError('No artist currently playing on this player.'); return; } const seedPrimary = toPrimaryArtist(p.currentArtist); lastPlayerArtistKey.current = normaliseName(seedPrimary); loadArtist(seedPrimary); }} />
     </div>
   );
 }

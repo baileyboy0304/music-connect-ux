@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ArtistNode } from '../api/apiTypes';
 import type { GraphPhase } from '../types';
-import { ACTIVE_BUBBLE_RADIUS, EXPLOSION_SPEED, FLY_IN_SPEED } from '../utils/animationConstants';
+import { EXPLOSION_SPEED, FLY_IN_SPEED } from '../utils/animationConstants';
 import { pickOffscreen } from '../utils/graphLayout';
 
 type WrappedText = { lines: string[]; fontSize: number; lineHeight: number; radius: number };
@@ -20,17 +20,35 @@ type SimNode = ArtistNode & {
   scale: number;
   selected?: boolean;
   driftPhase: number;
+  norm: number;
 };
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 
-// Bubble sizes scale with the available canvas; these compute from a viewport min-side.
-const radiiForViewport = (viewportMin: number) => ({
-  relMin: Math.max(28, Math.round(viewportMin * 0.045)),
-  relMax: Math.max(60, Math.round(viewportMin * 0.115)),
-  activeBase: Math.max(ACTIVE_BUBBLE_RADIUS, Math.round(viewportMin * 0.08)),
-  activeMax: Math.max(120, Math.round(viewportMin * 0.16))
-});
+// Layout parameters for a given viewport + bubble count.
+// Picks a ring radius that fits in the viewport, then sizes bubbles so they
+// fit at uniform angular spacing without overflowing the canvas.
+const computeLayout = (w: number, h: number, n: number) => {
+  const halfMin = Math.max(80, Math.min(w, h) / 2);
+  const margin = 16;
+  const padding = 12;
+  const safeN = Math.max(1, n);
+  const angleStep = (Math.PI * 2) / safeN;
+  const sinHalf = Math.sin(angleStep / 2);
+  const usable = halfMin - margin;
+  // Solve: ring + maxBubbleR = usable; maxBubbleR = ring*sinHalf - padding/2
+  let ring = Math.max(80, (usable + padding / 2) / (1 + sinHalf));
+  let maxBubbleR = Math.max(28, ring * sinHalf - padding / 2);
+  // Cap the max bubble radius so a single big bubble never dominates
+  maxBubbleR = Math.min(maxBubbleR, halfMin * 0.22);
+  // Keep bubbles fairly uniform in size — colour does the heavy lifting on
+  // signalling similarity; size is a secondary signal.
+  const minBubbleR = Math.max(38, Math.round(maxBubbleR * 0.78));
+  const activeR = Math.min(Math.round(ring * 0.42), Math.max(72, Math.round(halfMin * 0.18)));
+  return { ring, maxBubbleR, minBubbleR, activeR, padding, angleStep };
+};
+
+const MIN_FONT_PX = 12;
 
 const greedyWrap = (text: string, maxChars: number): string[] => {
   const words = (text || '').split(/\s+/).filter(Boolean);
@@ -122,25 +140,20 @@ export function BubbleGraph({
   const popTimer = useRef(0);
   const drag = useRef<DragState | null>(null);
 
-  const radii = useMemo(() => radiiForViewport(Math.min(size.w, size.h)), [size.w, size.h]);
+  const layout = useMemo(
+    () => computeLayout(size.w, size.h, Math.max(1, similarArtists.length)),
+    [size.w, size.h, similarArtists.length]
+  );
 
   const activeFit = useMemo(
-    () => fitText(activeArtist.name, radii.activeBase, radii.activeMax, [24, 22, 20, 18, 16, 14, 12], 4),
-    [activeArtist.name, radii.activeBase, radii.activeMax]
+    () => fitText(activeArtist.name, layout.activeR, layout.activeR + 30, [24, 22, 20, 18, 16, 14, MIN_FONT_PX], 4),
+    [activeArtist.name, layout.activeR]
   );
 
   const placeTargets = (list: SimNode[]) => {
     if (list.length === 0) return;
-    const N = list.length;
-    const padding = 14;
-    const maxR = list.reduce((m, n) => Math.max(m, n.r), 0);
-    const angleStep = (Math.PI * 2) / N;
-    // Ring big enough that adjacent bubbles (with their max radius) don't overlap at uniform spacing.
-    const ringFromChord = (maxR * 2 + padding) / (2 * Math.sin(angleStep / 2));
-    const ringFromActive = activeFit.radius + 50 + maxR;
-    const ringFromViewport = Math.min(size.w, size.h) * 0.42;
-    const ring = Math.max(ringFromChord, ringFromActive, ringFromViewport);
-    for (let i = 0; i < N; i++) {
+    const { ring, angleStep } = layout;
+    for (let i = 0; i < list.length; i++) {
       const angle = -Math.PI / 2 + i * angleStep;
       list[i].tx = center.x + Math.cos(angle) * ring;
       list[i].ty = center.y + Math.sin(angle) * ring;
@@ -157,10 +170,13 @@ export function BubbleGraph({
     const maxSim = Math.max(...sims);
     const range = Math.max(0.001, maxSim - minSim);
 
+    const fontStack = [16, 15, 14, 13, MIN_FONT_PX];
+
     const list: SimNode[] = similarArtists.map((n, i) => {
       const norm = ((n.similarity ?? 0) - minSim) / range;
-      const baseR = radii.relMin + norm * (radii.relMax - radii.relMin) * 0.7;
-      const fit = fitText(n.name, baseR, radii.relMax, [17, 16, 15, 14, 13, 12, 11, 10], 3);
+      // Size variance is small — colour drives the similarity signal.
+      const baseR = layout.minBubbleR + norm * (layout.maxBubbleR - layout.minBubbleR);
+      const fit = fitText(n.name, baseR, layout.maxBubbleR, fontStack, 3);
       const c = colorForNorm(norm);
       return {
         ...n,
@@ -172,7 +188,8 @@ export function BubbleGraph({
         stroke: c.stroke,
         x: 0, y: 0, vx: 0, vy: 0, tx: 0, ty: 0,
         opacity: 0, scale: 1,
-        driftPhase: i * 0.7 + Math.random() * Math.PI * 2
+        driftPhase: i * 0.7 + Math.random() * Math.PI * 2,
+        norm
       };
     });
     // Shuffle before placement so colour gradient doesn't run clockwise around the ring.
@@ -211,15 +228,26 @@ export function BubbleGraph({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [similarArtists]);
 
-  // On viewport resize: re-place ring targets without resetting node positions
+  // On viewport resize: rescale bubbles and re-place ring targets without flying them in again
   useEffect(() => {
-    if (nodes.current.length > 0) placeTargets(nodes.current);
+    if (nodes.current.length > 0) {
+      const fontStack = [16, 15, 14, 13, MIN_FONT_PX];
+      for (const n of nodes.current) {
+        const baseR = layout.minBubbleR + n.norm * (layout.maxBubbleR - layout.minBubbleR);
+        const fit = fitText(n.name, baseR, layout.maxBubbleR, fontStack, 3);
+        n.r = fit.radius;
+        n.lines = fit.lines;
+        n.fontSize = fit.fontSize;
+        n.lineHeight = fit.lineHeight;
+      }
+      placeTargets(nodes.current);
+    }
     if (!activePos.current.exploding) {
       activePos.current.x = center.x;
       activePos.current.y = center.y;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [center.x, center.y, size.w, size.h]);
+  }, [center.x, center.y, layout.ring, layout.minBubbleR, layout.maxBubbleR]);
 
   // Animation loop
   useEffect(() => {

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { MediaItem } from '../api/apiTypes';
 
 type Props = {
@@ -12,8 +12,75 @@ type Props = {
   loading: boolean;
 };
 
+const DRAG_THRESHOLD = 6;
+
+// Hook: enables mouse drag-to-scroll inside an overflow-y list, the way native
+// touch already does on touch devices. Touch / pen are left to the browser.
+function useDragToScroll() {
+  const ref = useRef<HTMLDivElement>(null);
+  const state = useRef<{ pointerId: number; startY: number; startScroll: number; moved: boolean } | null>(null);
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType !== 'mouse') return;
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    // Don't hijack drag when starting on an interactive control
+    if (target.closest('button, a, input, select, textarea')) return;
+    state.current = {
+      pointerId: e.pointerId,
+      startY: e.clientY,
+      startScroll: ref.current?.scrollTop ?? 0,
+      moved: false
+    };
+  };
+
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const s = state.current;
+    if (!s || s.pointerId !== e.pointerId) return;
+    const dy = e.clientY - s.startY;
+    if (!s.moved && Math.abs(dy) < DRAG_THRESHOLD) return;
+    if (!s.moved) {
+      s.moved = true;
+      ref.current?.classList.add('dragging');
+      try { (e.currentTarget as Element).setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    }
+    if (ref.current) ref.current.scrollTop = s.startScroll - dy;
+  };
+
+  const endDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    const s = state.current;
+    if (!s || s.pointerId !== e.pointerId) return;
+    if (s.moved) {
+      try { (e.currentTarget as Element).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+      ref.current?.classList.remove('dragging');
+    }
+    state.current = null;
+  };
+
+  // If a drag actually happened, swallow the click that would otherwise fire on a child card.
+  const onClickCapture = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (state.current && state.current.moved) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
+
+  return {
+    ref,
+    handlers: {
+      onPointerDown,
+      onPointerMove,
+      onPointerUp: endDrag,
+      onPointerCancel: endDrag,
+      onClickCapture
+    }
+  };
+}
+
 export function MediaPanel({ albums, tracks, albumTrackMap, onExpandAlbum, onPlayAlbum, onPlayTrack, onExploreArtist, loading }: Props) {
   const [expandedAlbum, setExpandedAlbum] = useState<string>('');
+  const albumsScroll = useDragToScroll();
+  const tracksScroll = useDragToScroll();
 
   const uniqAlbums = useMemo(() => {
     const seen = new Set<string>();
@@ -29,7 +96,7 @@ export function MediaPanel({ albums, tracks, albumTrackMap, onExpandAlbum, onPla
     <div className="mediaPanel">
       <section className="mediaColumn">
         <h3>Albums</h3>
-        <div className="mediaList">
+        <div className="mediaList" ref={albumsScroll.ref} {...albumsScroll.handlers}>
           {loading && albums.length === 0 && <div className="empty">Loading albums…</div>}
           {!loading && uniqAlbums.length === 0 && <div className="empty">No albums available</div>}
           {uniqAlbums.map((a) => {
@@ -76,7 +143,7 @@ export function MediaPanel({ albums, tracks, albumTrackMap, onExpandAlbum, onPla
 
       <section className="mediaColumn">
         <h3>Tracks</h3>
-        <div className="mediaList">
+        <div className="mediaList" ref={tracksScroll.ref} {...tracksScroll.handlers}>
           {loading && tracks.length === 0 && <div className="empty">Loading tracks…</div>}
           {!loading && tracks.length === 0 && <div className="empty">No tracks available</div>}
           {tracks.map((t) => (
