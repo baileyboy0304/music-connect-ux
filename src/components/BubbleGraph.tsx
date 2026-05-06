@@ -24,10 +24,13 @@ type SimNode = ArtistNode & {
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 
-const RELATED_RADIUS_MIN = 36;
-const RELATED_RADIUS_MAX = 96;
-const ACTIVE_RADIUS_BASE = ACTIVE_BUBBLE_RADIUS;
-const ACTIVE_RADIUS_MAX = 130;
+// Bubble sizes scale with the available canvas; these compute from a viewport min-side.
+const radiiForViewport = (viewportMin: number) => ({
+  relMin: Math.max(28, Math.round(viewportMin * 0.045)),
+  relMax: Math.max(60, Math.round(viewportMin * 0.115)),
+  activeBase: Math.max(ACTIVE_BUBBLE_RADIUS, Math.round(viewportMin * 0.08)),
+  activeMax: Math.max(120, Math.round(viewportMin * 0.16))
+});
 
 const greedyWrap = (text: string, maxChars: number): string[] => {
   const words = (text || '').split(/\s+/).filter(Boolean);
@@ -119,26 +122,28 @@ export function BubbleGraph({
   const popTimer = useRef(0);
   const drag = useRef<DragState | null>(null);
 
+  const radii = useMemo(() => radiiForViewport(Math.min(size.w, size.h)), [size.w, size.h]);
+
   const activeFit = useMemo(
-    () => fitText(activeArtist.name, ACTIVE_RADIUS_BASE, ACTIVE_RADIUS_MAX, [22, 20, 18, 16, 14, 12], 4),
-    [activeArtist.name]
+    () => fitText(activeArtist.name, radii.activeBase, radii.activeMax, [24, 22, 20, 18, 16, 14, 12], 4),
+    [activeArtist.name, radii.activeBase, radii.activeMax]
   );
 
   const placeTargets = (list: SimNode[]) => {
     if (list.length === 0) return;
-    const padding = 16;
+    const N = list.length;
+    const padding = 14;
     const maxR = list.reduce((m, n) => Math.max(m, n.r), 0);
-    const circumference = list.reduce((s, n) => s + n.r * 2 + padding, 0);
-    const ringFromBubbles = circumference / (2 * Math.PI);
+    const angleStep = (Math.PI * 2) / N;
+    // Ring big enough that adjacent bubbles (with their max radius) don't overlap at uniform spacing.
+    const ringFromChord = (maxR * 2 + padding) / (2 * Math.sin(angleStep / 2));
+    const ringFromActive = activeFit.radius + 50 + maxR;
     const ringFromViewport = Math.min(size.w, size.h) * 0.42;
-    const ring = Math.max(activeFit.radius + 60 + maxR, ringFromBubbles, ringFromViewport);
-    let arc = -Math.PI / 2;
-    for (const n of list) {
-      const w = (n.r * 2 + padding) / ring;
-      arc += w / 2;
-      n.tx = center.x + Math.cos(arc) * ring;
-      n.ty = center.y + Math.sin(arc) * ring;
-      arc += w / 2;
+    const ring = Math.max(ringFromChord, ringFromActive, ringFromViewport);
+    for (let i = 0; i < N; i++) {
+      const angle = -Math.PI / 2 + i * angleStep;
+      list[i].tx = center.x + Math.cos(angle) * ring;
+      list[i].ty = center.y + Math.sin(angle) * ring;
     }
   };
 
@@ -154,8 +159,8 @@ export function BubbleGraph({
 
     const list: SimNode[] = similarArtists.map((n, i) => {
       const norm = ((n.similarity ?? 0) - minSim) / range;
-      const baseR = RELATED_RADIUS_MIN + norm * (RELATED_RADIUS_MAX - RELATED_RADIUS_MIN) * 0.6;
-      const fit = fitText(n.name, baseR, RELATED_RADIUS_MAX, [16, 15, 14, 13, 12, 11, 10], 3);
+      const baseR = radii.relMin + norm * (radii.relMax - radii.relMin) * 0.7;
+      const fit = fitText(n.name, baseR, radii.relMax, [17, 16, 15, 14, 13, 12, 11, 10], 3);
       const c = colorForNorm(norm);
       return {
         ...n,
@@ -170,6 +175,11 @@ export function BubbleGraph({
         driftPhase: i * 0.7 + Math.random() * Math.PI * 2
       };
     });
+    // Shuffle before placement so colour gradient doesn't run clockwise around the ring.
+    for (let i = list.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [list[i], list[j]] = [list[j], list[i]];
+    }
     placeTargets(list);
     nodes.current = list.map((n) => ({ ...n, ...pickOffscreen(size.w, size.h) }));
   };

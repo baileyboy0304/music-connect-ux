@@ -38,18 +38,28 @@ export function MusicNeighbourhoodPage() {
   const [albumTrackMap, setAlbumTrackMap] = useState<Record<string, MediaItem[]>>({});
   const didBootstrap = useRef(false);
   const lastTrackSig = useRef('');
+  const lastArtistKey = useRef('');
+  const similarCountRef = useRef(0);
   const artistLoadSeq = useRef(0);
 
+  useEffect(() => { similarCountRef.current = similarArtists.length; }, [similarArtists]);
+
   const loadArtist = async (artistName: string) => {
-    const requestSeq = ++artistLoadSeq.current;
     const primaryArtist = toPrimaryArtist(artistName);
     if (!primaryArtist.trim()) { setError('Enter an artist name.'); return; }
+    const key = normaliseName(primaryArtist);
+    // Same artist already loaded with bubbles? Don't reload — would clear the network briefly.
+    if (key === lastArtistKey.current && similarCountRef.current > 0) {
+      return;
+    }
+    lastArtistKey.current = key;
+    const requestSeq = ++artistLoadSeq.current;
     console.log('Active artist change', artistName, '->', primaryArtist);
     setLoadingMedia(true);
     setError('');
     setSimilarArtists([]);
     setAlbumTrackMap({});
-    setActiveArtist({ id: normaliseName(primaryArtist).replace(/\s+/g, '-'), name: primaryArtist });
+    setActiveArtist({ id: key.replace(/\s+/g, '-'), name: primaryArtist });
     try {
       const search = await searchMusic(primaryArtist, ['artist', 'album', 'track'], 80);
       const searchRoot = unwrapResult(search);
@@ -141,16 +151,18 @@ export function MusicNeighbourhoodPage() {
         const title = p.current_media?.name || p.current_item?.name || p.current_media_item?.name || p.current_media?.title || p.media_title || 'N/A';
         const artist = p.current_media?.artist || p.current_item?.artist || p.current_media_item?.artist || p.media_artist || 'N/A';
         setPlayers((prev) => prev.map((pl) => pl.id === selectedPlayer ? { ...pl, status: p.state || p.status || pl.status, currentTrack: title, currentArtist: artist } : pl));
-        const sig = `${title}::${artist}`;
-        if (artist && artist !== 'N/A' && sig !== lastTrackSig.current) {
-          lastTrackSig.current = sig;
-          console.log('[MA] detected track change', sig);
-          loadArtist(toPrimaryArtist(artist));
+        lastTrackSig.current = `${title}::${artist}`;
+        if (artist && artist !== 'N/A') {
+          const newKey = normaliseName(toPrimaryArtist(artist));
+          if (newKey && newKey !== lastArtistKey.current) {
+            console.log('[MA] detected artist change', artist);
+            loadArtist(toPrimaryArtist(artist));
+          }
         }
       } catch (e) {
         console.error('[MA] polling failed', e);
       }
-    }, 10000);
+    }, 2500);
     return () => clearInterval(timer);
   }, [selectedPlayer]);
 
@@ -158,7 +170,7 @@ export function MusicNeighbourhoodPage() {
     <div className="page">
       <main>
         <div className="toolbar">
-          <h1>Music Neighbourhood</h1>
+          <h1>Music Connect</h1>
           <ManualArtistSearch onSearch={(t) => loadArtist(t)} />
           <label className="toggle">
             <input
